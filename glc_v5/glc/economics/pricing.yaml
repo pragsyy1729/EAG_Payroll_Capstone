@@ -1,0 +1,403 @@
+# glc_v4 — per-MODEL pricing.
+#
+# v3 priced per *provider*, which is wrong the moment a provider serves more
+# than one model (every provider here does). This table is keyed by model, with
+# the provider table kept only as a last-resort fallback so an unpriced model
+# reports exactly what v3 reported for it.
+#
+# Everything in this file is data. Adding a model is a new entry here and no
+# Python edit anywhere.
+#
+# Resolution order for (provider, model):
+#   1. models[<model>]                      exact string
+#   2. models[<model with vendor/ prefix stripped>]
+#   3. first matching patterns[] glob, in file order
+#   4. providers[<provider base name>]      v3 behaviour
+#   5. unpriced_default                     (0/0 — never invent a price)
+#
+# Units: USD per 1,000,000 tokens.
+# Multipliers are applied to the *input* rate for cached tokens, and to both
+# rates for batch. They are data because the mechanics differ per vendor:
+# Anthropic charges 1.25x/2.0x to write a cache and 0.1x to read it; OpenAI's
+# implicit cache is a free write and a 0.1x read; Gemini explicit caching is a
+# 0.25x read plus a storage fee this table does not model.
+
+version: 1
+
+defaults:
+  currency: USD
+  unit: usd_per_mtok
+  cache_read_multiplier: 1.0 # no discount unless the model declares one
+  cache_write_multiplier: 1.0
+  batch_multiplier: 1.0
+
+unpriced_default:
+  input: 0.0
+  output: 0.0
+
+# `quality` is a ROUTING WEIGHT, not a benchmark score: it only ever gets
+# compared with the other weights in this file to break a cost tie. The rungs of
+# the capability ladder in routing.yaml are ordered so their weights increase
+# with their blended price, because a rung that costs more and scores lower would
+# never be chosen and the ladder would collapse to one model.
+#
+# Rows marked MEASURED carry numbers taken from this gateway on 2026-07-30: one
+# identical 3-sentence prompt, max_tokens 512, temperature 0, `reasoning: "off"`.
+# `measured_*` keys are documentation — the loader reads input/output/quality and
+# the multipliers, and ignores everything else — so a re-measurement is a config
+# edit with no code consequence.
+
+# ── Models actually reachable from this gateway's default .env ───────────────
+models:
+  # Google AI Studio. Free under the course's AI-Studio quota; list rates are
+  # recorded so a paid deployment reports real dollars.
+  gemini-3.1-flash-lite:
+    provider: gemini
+    #: STANDARD rung, second in the ring. MEASURED: 31 in / 89 out,
+    #: $0.00014125, 1236 ms.
+    input: 0.25
+    output: 1.50
+    cache_read_multiplier: 0.25
+    cache_write_multiplier: 1.0
+    batch_multiplier: 0.5
+    quality: 0.62
+    measured_latency_ms: 1236
+    measured_reference_usd: 0.00014125
+    measured_non_empty: true
+  # CHECKED 2026-08-15 against ai.google.dev: gemini-3.1-flash is no longer
+  # published, and gemini-3.1-pro exists only as gemini-3.1-pro-preview, which
+  # is NOT on the free tier. Both removed rather than left to 404 in routing.
+  #
+  # Everything below is free-tier eligible as of 2026-08-15. Prices are list
+  # rates so a paid deployment still reports real dollars.
+  gemini-3.7-flash:
+    provider: gemini
+    #: FRONTIER rung. Newest free flash. Unmeasured on this gateway.
+    input: 0.50
+    output: 3.00
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.82
+  gemini-3.6-flash:
+    provider: gemini
+    input: 0.50
+    output: 3.00
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.78
+  gemini-3.5-flash:
+    provider: gemini
+    input: 0.45
+    output: 2.75
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.74
+  gemini-3.5-flash-lite:
+    provider: gemini
+    input: 0.20
+    output: 1.20
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.66
+  gemini-2.5-pro:
+    provider: gemini
+    #: Free tier despite the pro name. Worth a FRONTIER slot on quality alone.
+    input: 1.25
+    output: 10.00
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.76
+  gemini-2.5-flash:
+    provider: gemini
+    input: 0.30
+    output: 2.50
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.58
+
+  # Groq
+  openai/gpt-oss-120b:
+    provider: groq
+    #: STANDARD rung, first in the ring. MEASURED: 101 in / 117 out,
+    #: $0.0001029, 744 ms. Thinks by default: the same call with the reasoning
+    #: dial left alone spent all 128 output tokens in its reasoning channel and
+    #: returned `content: ""` for $0.00011115 — a fully billed non-answer.
+    input: 0.15
+    output: 0.75
+    cache_read_multiplier: 0.1
+    quality: 0.60
+    measured_latency_ms: 744
+    measured_reference_usd: 0.0001029
+    measured_non_empty: true
+    measured_needs_reasoning_off: true
+  llama-3.3-70b-versatile:
+    provider: groq
+    input: 0.59
+    output: 0.79
+    quality: 0.48
+  # CHECKED 2026-08-15 against console.groq.com/docs/models.
+  openai/gpt-oss-20b:
+    provider: groq
+    #: CHEAP rung. Smaller sibling of the 120b already in the ring.
+    input: 0.10
+    output: 0.50
+    quality: 0.50
+  groq/compound:
+    provider: groq
+    #: An agentic system rather than a bare model: it may call tools itself.
+    #: Priced at the 120b rate until measured.
+    input: 0.15
+    output: 0.75
+    quality: 0.63
+
+  # Cerebras
+  # CHECKED 2026-08-15 against inference-docs.cerebras.ai. The catalogue is now
+  # three models: gpt-oss-120b (production), gemma-4-31b (preview), and
+  # zai-glm-4.7, which DEPRECATES 2026-08-17. llama3.1-8b and qwen3 are no
+  # longer published and have been removed.
+  gemma-4-31b:
+    provider: cerebras
+    #: Replaces zai-glm-4.7 as the Cerebras entry. Unmeasured on this gateway.
+    input: 0.10
+    output: 0.10
+    quality: 0.55
+  zai-glm-4.7:
+    provider: cerebras
+    #: RETIRES 2026-08-17. Kept only so an in-flight run resolves a price.
+    #: Remove after that date; routing should not select it.
+    deprecated_after: "2026-08-17"
+    #: FRONTIER rung, second in the ring. MEASURED: 35 in / 86 out, $0.0000605,
+    #: 1033 ms. The worst offender for reasoning: with the dial left alone it
+    #: burned all 512 output tokens thinking and returned `content: ""` for
+    #: $0.0002735 — 4.5x the price of the answer, for no answer.
+    input: 0.50
+    output: 0.50
+    quality: 0.61
+    measured_latency_ms: 1033
+    measured_reference_usd: 0.0000605
+    measured_non_empty: true
+    measured_needs_reasoning_off: true
+
+  # NVIDIA NIM — free build tier for the course.
+  #
+  # MEASURED 2026-07-30: deepseek-v4-pro and llama-3.1-nemotron-nano-8b-v1 both
+  # accept the connection on this key and never answer — 180 s, then an empty
+  # error. meta/llama-3.1-8b-instruct on the same key answered in 1.37 s. The
+  # provider is benched in routing.yaml's `unavailable:` with that reason; the
+  # rows stay here so the numbers come back correct if NVIDIA_MODEL is repointed.
+  deepseek-ai/deepseek-v4-pro:
+    provider: nvidia
+    input: 0.0
+    output: 0.0
+    quality: 0.70
+    measured_non_empty: false
+    measured_note: "no response in 180 s, 3/3 attempts"
+  meta/llama-3.1-8b-instruct:
+    provider: nvidia
+    #: The one NVIDIA model measured working. MEASURED: 65 in / 114 out,
+    #: 1365 ms, free on the build tier.
+    input: 0.0
+    output: 0.0
+    quality: 0.30
+    measured_latency_ms: 1365
+    measured_non_empty: true
+  deepseek-ai/deepseek-v3.2:
+    provider: nvidia
+    input: 0.0
+    output: 0.0
+    quality: 0.66
+  nvidia/llama-3.1-nemotron-nano-8b-v1:
+    provider: nvidia
+    input: 0.0
+    output: 0.0
+    quality: 0.28
+
+  # GitHub Models — free quota; the rates below are what the same models cost
+  # on Azure OpenAI once the quota is gone.
+
+  # OpenRouter free tier — CHEAP rung, second in the ring. Priced by name rather
+  # than by the `*:free` glob so the ladder's second rung is not a guess.
+  # MEASURED: 47 in / 108 out, $0.00, 1849 ms. Thinks by default and leaks the
+  # scratchpad straight into `content` when it runs out of tokens.
+  nvidia/nemotron-3-super-120b-a12b:free:
+    provider: openrouter
+    input: 0.0
+    output: 0.0
+    quality: 0.38
+    measured_latency_ms: 1849
+    measured_reference_usd: 0.0
+    measured_non_empty: true
+    measured_needs_reasoning_off: true
+
+  # Local via Ollama — never charged, but priced at 0 explicitly so the report
+  # says "free because local" rather than "unpriced".
+  #
+  # CHEAP rung, first in the ring. MEASURED: 46 in / 379 out, $0.00, 39570 ms.
+  # The dollar cost is genuinely zero and the wall-clock cost is 53x the frontier
+  # rung's — the cheapest rung on a price ladder is not the cheapest rung on a
+  # latency ladder, and a router that only reads prices cannot see that.
+  qwen3.8:27b:
+    provider: ollama
+    #: CHEAP rung. Local, so free. MEASURED 2026-08-15 on this machine:
+    #: 17 GB, answers in 2 eval tokens with thinking off.
+    #:
+    #: THINKS BY DEFAULT, and this is not cosmetic. With `think` left alone and
+    #: num_predict=8 it spent all eight tokens in its reasoning channel and
+    #: returned content:"" — the same fully-billed non-answer already recorded
+    #: here for zai-glm-4.7 and gpt-oss-120b. Send think:false.
+    input: 0.0
+    output: 0.0
+    quality: 0.58
+    measured_non_empty: true
+    measured_needs_reasoning_off: true
+  phi4:latest:
+    provider: ollama
+    #: Local fallback. MEASURED 2026-08-15: answers plainly, no reasoning channel.
+    input: 0.0
+    output: 0.0
+    quality: 0.44
+    measured_non_empty: true
+  microsoft/Phi-4-mini-instruct:
+    provider: github
+    input: 0.0
+    output: 0.0
+    quality: 0.26
+
+# ── Reference frontier rates (July 2026 list prices) ────────────────────────
+# Not reachable from the default .env, but priced so a deployment that adds an
+# Anthropic/OpenAI provider gets correct dollars with zero code change, and so
+# the cost-per-task lecture has real numbers to compare against.
+  # RESTORED 2026-08-15. These are GitHub Models, not OpenAI direct: the
+  # openai/* prefix is the publisher, not the endpoint. OpenAI retired
+  # gpt-4.1 on its own API; GitHub's free catalogue still serves it, and
+  # the FRONTIER measurement below was taken through that surface.
+  openai/gpt-4.1:
+    provider: github
+    #: FRONTIER rung, first in the ring, and the most expensive model this
+    #: gateway can reach. MEASURED: 37 in / 76 out, $0.000682, 2883 ms. Answers
+    #: without any reasoning dial. Context caps at 8k on this surface.
+    input: 2.00
+    output: 8.00
+    cache_read_multiplier: 0.25
+    #: Raised from 0.55. At 0.55 the frontier rung scored BELOW gpt-oss-120b
+    #: (0.60) at a quarter of its price, so any cost/quality objective demoted
+    #: it out of its own rung and the ladder collapsed to one model.
+    quality: 0.72
+    measured_latency_ms: 2883
+    measured_reference_usd: 0.000682
+    measured_non_empty: true
+  openai/gpt-4.1-mini:
+    provider: github
+    input: 0.40
+    output: 1.60
+    cache_read_multiplier: 0.25
+    quality: 0.52
+  claude-haiku-4-5:
+    provider: anthropic
+    input: 1.00
+    output: 5.00
+    cache_read_multiplier: 0.1
+    cache_write_multiplier: 1.25
+    batch_multiplier: 0.5
+    quality: 0.50
+  claude-sonnet-5:
+    provider: anthropic
+    input: 2.00
+    output: 10.00
+    cache_read_multiplier: 0.1
+    cache_write_multiplier: 1.25
+    batch_multiplier: 0.5
+    quality: 0.57
+  claude-opus-5:
+    provider: anthropic
+    input: 5.00
+    output: 25.00
+    cache_read_multiplier: 0.1
+    cache_write_multiplier: 1.25
+    batch_multiplier: 0.5
+    quality: 0.61
+  gpt-5.6-luna:
+    provider: openai
+    input: 1.00
+    output: 6.00
+    cache_read_multiplier: 0.1
+    batch_multiplier: 0.5
+    quality: 0.50
+  gpt-5.6-terra:
+    provider: openai
+    input: 2.50
+    output: 15.00
+    cache_read_multiplier: 0.1
+    batch_multiplier: 0.5
+    quality: 0.55
+  gpt-5.6-sol:
+    provider: openai
+    input: 5.00
+    output: 30.00
+    cache_read_multiplier: 0.1
+    batch_multiplier: 0.5
+    quality: 0.59
+
+# ── Glob fallbacks, matched in order ────────────────────────────────────────
+# A new point release (gemini-3.2-flash-lite) is priced sanely before anyone
+# gets round to adding it above.
+patterns:
+  - match: "*:free"
+    input: 0.0
+    output: 0.0
+    quality: 0.35
+  - match: "gemini-*-flash-lite*"
+    input: 0.25
+    output: 1.50
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.60
+  - match: "gemini-*-flash*"
+    input: 0.50
+    output: 3.00
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.68
+  - match: "gemini-*-pro*"
+    input: 2.00
+    output: 12.00
+    cache_read_multiplier: 0.25
+    batch_multiplier: 0.5
+    quality: 0.76
+  - match: "claude-*"
+    input: 2.00
+    output: 10.00
+    cache_read_multiplier: 0.1
+    cache_write_multiplier: 1.25
+    batch_multiplier: 0.5
+    quality: 0.57
+  - match: "*nemotron*"
+    input: 0.0
+    output: 0.0
+    quality: 0.40
+
+# ── v3 per-provider table, kept verbatim as the backward-compatible floor ───
+# Reached only when nothing above matched. These are the exact numbers
+# glc_v3's pricing.PRICING_USD_PER_MTOK carried.
+providers:
+  gemini:
+    input: 0.0
+    output: 0.0
+  nvidia:
+    input: 0.0
+    output: 0.0
+  groq:
+    input: 0.15
+    output: 0.75
+  cerebras:
+    input: 0.50
+    output: 0.50
+  openrouter:
+    input: 0.0
+    output: 0.0
+  github:
+    input: 0.0
+    output: 0.0
+  ollama:
+    input: 0.0
+    output: 0.0

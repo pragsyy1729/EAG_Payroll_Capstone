@@ -1,0 +1,273 @@
+# glc_v4 — routing policy.
+#
+# glc_v3 classified every prompt into TINY / LARGE / HUGE with a router LLM and
+# then looked the tier up in a hardcoded TIER_TO_ORDER dict. Three gaps this
+# file closes:
+#
+#   1. `role` was logged and then ignored. A "decision" call and a "perception"
+#      call with the same token count got the same model. Roles now carry tier
+#      floors and ceilings, so the role changes the model.
+#   2. HUGE returned 503 with a note about an unimplemented summariser. It now
+#      routes to whichever providers can actually hold the context.
+#   3. Provider order per tier was a fixed list. It can now be sorted by cost,
+#      by quality, or by a tradeoff dial between them, using the prices and
+#      quality scores in pricing.yaml.
+#
+# Adding a role, a tier, or a provider preference is an edit here and nothing
+# else. No Python knows the name of any role in this file.
+
+version: 1
+
+# ── Tiers ───────────────────────────────────────────────────────────────────
+# `order` is the base failover ring, preserved from glc_v3's TIER_TO_ORDER so
+# the default behaviour is unchanged. `min_ctx` filters candidates whose
+# max_ctx cannot hold the estimate — that is what makes HUGE routable instead
+# of a 503.
+tiers:
+  TINY:
+    order: [github, openrouter, groq, nvidia, cerebras, gemini, ollama]
+    description: short, simple, factual
+  LARGE:
+    order: [gemini, groq, nvidia, cerebras, github, openrouter, ollama]
+    description: dense or long-context work
+  HUGE:
+    order: [gemini, ollama, openrouter, nvidia, groq]
+    min_ctx: 8000
+    description: >
+      Above the 8k classifier boundary. v3 refused these outright; v4 keeps
+      only providers whose max_ctx actually covers the prompt (Gemini's 1M
+      window is the reason this tier is servable at all) and refuses with a
+      context-specific error if none qualify.
+
+  # ── The cross-model capability ladder ──────────────────────────────────────
+  # TINY/LARGE/HUGE above are the CLASSIFIER's ladder: they answer "how big is
+  # this prompt", and their rings are v3's failover rings verbatim, so default
+  # routing has not moved. What they were never able to answer is "how good does
+  # this answer need to be", because a ring is a failover order and not a price
+  # ladder — every rung of it could end up served by the same model.
+  #
+  # These three rungs are the price ladder. Each one names a DIFFERENT model, on
+  # a different provider, and the rungs are ordered by the blended $/Mtok in
+  # pricing.yaml. `strict: true` is what makes a rung a rung: without it
+  # `order_for` appends every other configured provider as a last-resort tail,
+  # and a CHEAP request could be answered by the frontier model. `objective:
+  # order` pins the declared preference against the global cost/quality dial,
+  # which would otherwise re-sort a one-model rung into a different model.
+  #
+  # Every price and latency below was MEASURED against this gateway on
+  # 2026-07-30 with an identical 3-sentence prompt at max_tokens 512,
+  # temperature 0, `reasoning: "off"`. See pricing.yaml for the per-model rows.
+  CHEAP:
+    order: [ollama, openrouter]
+    strict: true
+    objective: order
+    description: >
+      Local weights first (qwen3.8:27b, $0.00/Mtok, 17 GB on disk; it
+      thinks by default and must be called with think:false or it
+      returns an empty answer), then OpenRouter's free tier
+      (nvidia/nemotron-3-super-120b-a12b:free, $0.00, measured 1.8 s). Free in
+      dollars, expensive in wall-clock on the local rung — which is the real
+      tradeoff a cheap rung buys, and the reason latency belongs next to price.
+  STANDARD:
+    order: [groq, gemini]
+    strict: true
+    objective: order
+    description: >
+      Groq openai/gpt-oss-120b ($0.15/$0.75 per Mtok, measured 0.74 s, 117
+      output tokens) with Gemini gemini-3.1-flash-lite ($0.25/$1.50, measured
+      1.2 s) as the same-rung failover. Both are genuinely different models
+      from either neighbouring rung.
+  FRONTIER:
+    order: [github, cerebras]
+    strict: true
+    objective: order
+    description: >
+      GitHub Models openai/gpt-4.1 ($2.00/$8.00 per Mtok, measured 2.9 s,
+      $0.000682 for the reference prompt) with Cerebras zai-glm-4.7
+      ($0.50/$0.50, measured 1.0 s) behind it. Note the context ceiling: both
+      cap at 8k, so a prompt above that belongs on HUGE, not here — this ladder
+      prices capability, the other one sizes context.
+
+# The escalation ladder, cheapest first. Also defines tier ordering for the
+# role floors and ceilings below, so there is one source of "which tier is
+# bigger". Unchanged from v3's classifier vocabulary.
+ladder: [TINY, LARGE, HUGE]
+
+# ── Named secondary ladders ─────────────────────────────────────────────────
+# `ladder` above stays the classifier's. A named ladder orders a different set
+# of tiers, and rank / next_tier / prev_tier resolve within whichever ladder a
+# tier belongs to — so escalation on the capability ladder walks CHEAP ->
+# STANDARD -> FRONTIER and budget pressure walks it back down, while the size
+# ladder keeps working exactly as it did. A tier may sit on only one ladder.
+ladders:
+  capability: [CHEAP, STANDARD, FRONTIER]
+
+# ── Benched providers ───────────────────────────────────────────────────────
+# Dropped from every tier, including the non-strict last-resort tail, and
+# reported as a per-candidate rejection so the refusal names the reason. This is
+# how a broken endpoint is taken out of rotation without a Python edit; delete
+# the line to bring it back.
+unavailable: {}
+  # RESOLVED 2026-07-30. nvidia was benched here, and the entry is worth reading
+  # even though it is now empty, because the diagnosis is the lesson.
+  #
+  # The symptom: every nvidia call sat for the client's full 180 s timeout and
+  # failed with an EMPTY error string, three times out of three. That looked
+  # like a dead provider. It was not. The deployment's NVIDIA_MODEL selected
+  # deepseek-ai/deepseek-v4-pro, which accepts the connection and never answers;
+  # nvidia/llama-3.1-nemotron-nano-8b-v1 behaved identically. The endpoint and
+  # the key were fine the whole time — meta/llama-3.1-8b-instruct on the same
+  # key answered in 1.37 s.
+  #
+  # So it was a bad model pin, not a dead provider, and the fix was one
+  # NVIDIA_MODEL edit. Re-measured after that edit: 1 205 ms, 227 chars, and
+  # nvidia is back in every ring it belongs to. Bench by name here when an
+  # endpoint is genuinely broken; delete the line to bring it back.
+
+# ── Cooldowns ───────────────────────────────────────────────────────────────
+# Seconds a provider stays benched after each class of failure. Overrides the
+# defaults in glc/routes/chat.py by name.
+#
+# `timeout` is the one that mattered: an httpx ReadTimeout stringifies to the
+# EMPTY string, so the old matcher recognised nothing and handed back a ZERO
+# cooldown — NVIDIA burned 180 s, was benched for no time at all, and was a
+# candidate again on the very next request. Ten minutes is deliberately much
+# longer than the 180 s it takes to notice.
+backoff:
+  timeout: 600
+  queue: 15
+  rate_limited: 30
+  rpm: 60
+  rpd: 3600
+  upstream_5xx: 20
+  auth: 600
+
+# ── Roles ───────────────────────────────────────────────────────────────────
+# The role a caller declares (`auto_route: <role>`) now shapes the tier:
+#   default_tier  used when no classifier ran
+#   min_tier      floor — clamp UP to at least this tier
+#   max_tier      ceiling — clamp DOWN to at most this tier
+#   escalate      may this role spend more to retry
+#
+# Role names are free-form. Add one here and it works; the gateway validates
+# against this list and falls back to `default_role` for anything unknown.
+default_role: perception
+
+roles:
+  perception:
+    # Cheap, high-volume observation. Never worth a frontier model, so it is
+    # capped: a wrong tier classification cannot escalate spend here.
+    default_tier: TINY
+    max_tier: LARGE
+    escalate: true
+  memory:
+    # Retrieval and summarisation of stored context. Long inputs are normal,
+    # so no ceiling, but no floor either.
+    default_tier: TINY
+    escalate: true
+  decision:
+    # The step whose mistakes are expensive. Floored at LARGE: a TINY
+    # classification is overridden, which is the single clearest demonstration
+    # that role changes routing.
+    min_tier: LARGE
+    default_tier: LARGE
+    escalate: true
+  # Example of adding a role with no code change: a cheap classifier role that
+  # must never leave the smallest tier and must never escalate.
+  triage:
+    default_tier: TINY
+    max_tier: TINY
+    escalate: false
+
+  # ── Roles on the capability ladder ────────────────────────────────────────
+  # A role's `default_tier` is what selects its ladder, so these three route
+  # across MODELS rather than across prompt sizes. The classifier still runs and
+  # its verdict is still honoured — carried across by position, so a TINY
+  # classification becomes CHEAP — and the floor/ceiling then override it, which
+  # is the whole demonstration: the role, not the prompt length, decides which
+  # model answers.
+  bulk:
+    #: High-volume grunt work. Capped at the free rung: a wrong classification
+    #: cannot spend money here, and it may not escalate off it.
+    default_tier: CHEAP
+    max_tier: CHEAP
+    escalate: false
+  worker:
+    #: The default working rung. May escalate one rung to FRONTIER when the
+    #: cheap answer fails a structural check.
+    default_tier: STANDARD
+    escalate: true
+  adjudicator:
+    #: The step whose mistakes are expensive. Floored at FRONTIER, so even a
+    #: TINY classification is answered by the frontier MODEL.
+    min_tier: FRONTIER
+    default_tier: FRONTIER
+    escalate: false
+
+# ── Cost / quality selection ────────────────────────────────────────────────
+# Reorders the tier's candidate ring. Rates and quality scores are read from
+# pricing.yaml, so a price change moves routing without touching this file.
+#
+#   objective: order | cost | quality | cost_quality
+#     order         keep the tier's declared ring (v3 behaviour)
+#     cost          cheapest blended $/Mtok first
+#     quality       highest quality score first
+#     cost_quality  score = tradeoff*quality - (1-tradeoff)*normalised_cost
+#
+#   tradeoff: 0.0 = pure cost, 1.0 = pure quality.
+selection:
+  objective: cost_quality
+  tradeoff: 0.5
+  #: Assumed output:input ratio when blending the two rates into one number.
+  output_weight: 0.35
+  #: Providers listed here are never reordered away from the front. Use for a
+  #: local model you want tried first because it is free.
+  pin_first: []
+
+# ── Cascade escalation (FrugalGPT-style) ────────────────────────────────────
+# Try the cheap tier; escalate only when the cheap answer looks bad. The point
+# of the confidence gate is that escalating on *every* call is strictly worse
+# than starting at the expensive tier — you pay for both.
+escalation:
+  enabled: true
+  max_escalations: 1
+  #: Answers scoring below this escalate one rung up the ladder.
+  confidence_threshold: 0.5
+  #: Which observations may trigger an escalation.
+  triggers: [empty_response, provider_failure, low_confidence, schema_failure]
+  #: Confidence is scored from structural signals only — no second LLM call,
+  #: because paying for a judge to check a cheap answer often costs more than
+  #: the expensive answer would have.
+  confidence:
+    empty_response: 0.0
+    schema_failure: 0.1
+    #: stop_reason == max_tokens. Scored just ABOVE the threshold on purpose:
+    #: truncation almost always means the caller under-budgeted max_tokens, and
+    #: a bigger model will hit the same cap. Escalating here would pay twice for
+    #: the same truncated answer.
+    truncated_response: 0.55
+    #: Shorter than this many characters counts as a non-answer. DISABLED (0)
+    #: on purpose. It was set to 8 during the build and immediately caused the
+    #: failure this session is about: "Paris" — a correct one-word answer to a
+    #: one-word question — scored 0.3, escalated to a bigger model, and made
+    #: cost-per-resolved-task worse while cost-per-call looked unchanged.
+    #: Emptiness is evidence that an answer is bad. Brevity is not. Set this
+    #: only for a task class whose answers are known to be long.
+    min_response_chars: 0
+    short_response: 0.3
+    #: Case-insensitive substrings that mark a hedge or refusal. EMPTY by
+    #: default: a marker list is a use-case-specific guess, and a wrong one
+    #: escalates good answers. Populate it for your own task class.
+    hedge_markers: []
+    hedge_penalty: 0.35
+    default: 1.0
+
+# ── Budget interaction ──────────────────────────────────────────────────────
+# The budget controller is the authority on refusal; this is only a preference.
+# When `prefer_affordable` is on, a tier whose cheapest provider is projected
+# to breach the remaining allowance is deprioritised, so a run near its ceiling
+# drifts down the ladder rather than slamming into a 402.
+budget:
+  prefer_affordable: true
+  #: Refuse to escalate when the escalated tier would breach the allowance.
+  block_escalation_on_breach: true
