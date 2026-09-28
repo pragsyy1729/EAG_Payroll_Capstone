@@ -225,7 +225,10 @@ jurisdiction.
 
 ## 14. AgentSwitch — the live backend
 
-`schemas.json` (repo root) and `openapi.json` (repo root) describe a separate
+`schemas.json` and `openapi.json` (originally dropped in the repo root,
+since removed — large static exports, superseded by the live
+`$AS/api/schemas` and `$AS/docs` endpoints noted below; everything they
+showed is captured in this section) describe a separate
 platform called **AgentSwitch** ("schema-driven, agent-composed business
 platform") shared across all 12 teams' apps. **Decision: AgentSwitch is the
 live backend for this agent** — payroll skills call it for real data and
