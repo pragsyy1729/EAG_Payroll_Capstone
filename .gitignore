@@ -37,3 +37,4 @@ install_token
 
 # Logs
 *.log
+harness/agentswitch_tools_*.json

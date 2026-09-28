@@ -1,10 +1,10 @@
-"""The S17Code -> gateway seam: ordinary authenticated HTTP.
+"""The payroll_agent -> gateway seam: ordinary authenticated HTTP.
 
-S17Code holds no provider credential. It asks the gateway for a completion; the
-gateway owns keys, routing, quotas and provider quirks. Session 15 adds one thing
-to this client: :meth:`GatewayClient.chat` returns the *usage* the gateway
-reports (tokens, cache tokens, latency), so the budget controller prices the call
-it actually made instead of guessing.
+payroll_agent holds no provider credential. It asks the gateway for a
+completion; the gateway owns keys, routing, quotas and provider quirks.
+:meth:`GatewayClient.chat` returns the *usage* the gateway reports (tokens,
+cache tokens, latency), so a budget controller can price the call it
+actually made instead of guessing.
 """
 from __future__ import annotations
 
@@ -38,11 +38,20 @@ class GatewayClient:
             "reasoning": "off",
             "agent": "s17_agent",
             # "gemini" is a logical gateway provider. The gateway expands it to
-            # the independently metered gemini_1..N key pool; S17Code never sees
+            # the independently metered gemini_1..N key pool; payroll_agent never sees
             # keys. Defaulting here means an unset env never falls through to the
             # gateway's own provider order (which may put a heavy model first).
             "provider": os.getenv("PAYROLL_GATEWAY_PROVIDER", "gemini"),
         }
+        # The shared gateway instance's own pricing.yaml still defaults to a
+        # model name the provider has since deprecated (confirmed live,
+        # 2026-09-29: Gemini returns 404 for gemini-2.5-flash and names its
+        # replacement in the error body). That default lives in a service
+        # this project does not own and should not edit; overriding the
+        # model per-call here, from our own env, fixes it without touching
+        # the shared instance at all.
+        if model := os.getenv("PAYROLL_GATEWAY_MODEL"):
+            payload["model"] = model
         for field, value in (request or {}).items():
             if field in self.PASSTHROUGH:
                 payload[field] = value
