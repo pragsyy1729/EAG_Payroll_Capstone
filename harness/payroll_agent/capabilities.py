@@ -23,6 +23,7 @@ exactly the kind of mistake that stays invisible until an audit.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,8 +34,18 @@ class CapabilityError(ValueError):
     """A proposed task does not satisfy the advertised capability contract."""
 
 
-def _check_format(label: str, format_name: str, value: Any) -> None:
+def _check_format(label: str, format_name: str, value: Any, known_values: Collection[str] | None) -> None:
     """Validate a declared value format. Unknown formats are a configuration bug."""
+    if format_name == "id":
+        # Provenance, not shape: an id must be a string the run has actually
+        # seen (in the goal, the stimulus, or a succeeded outcome). A model
+        # that invents one is rejected before anything reaches AgentSwitch.
+        # ``None`` means the caller supplied no evidence set, so nothing to check against.
+        if known_values is not None and value not in known_values:
+            raise CapabilityError(
+                f"{label}={value!r} does not appear in the goal or any earlier outcome; "
+                "use an id taken from a completed result, not one you infer")
+        return
     if format_name == "month":
         if not isinstance(value, str) or not _MONTH_RE.match(value):
             raise CapabilityError(f"{label} must be a pay month as YYYY-MM")
@@ -118,7 +129,7 @@ class CapabilityRegistry:
         """Every capability declaring membership of a named family."""
         return {item.name for item in self._items.values() if name in item.families}
 
-    def validate(self, name: str, values: Any) -> dict[str, Any]:
+    def validate(self, name: str, values: Any, *, known_values: Collection[str] | None = None) -> dict[str, Any]:
         capability = self.get(name)
         if not isinstance(values, dict):
             raise CapabilityError(f"arguments for {name} must be an object")
@@ -158,7 +169,7 @@ class CapabilityRegistry:
             # the capability name -- see agentswitch's "month" format, the
             # same pattern AgentSwitch's own tool schema uses server-side.
             if spec.format:
-                _check_format(f"{name}.{key}", spec.format, value)
+                _check_format(f"{name}.{key}", spec.format, value, known_values)
             clean[key] = value
         return clean
 
@@ -204,7 +215,7 @@ def default_registry() -> CapabilityRegistry:
             "Read one PayRun record by id: computed totals, status, funding state, and its "
             "legal next transitions.",
             {"jurisdiction": _JURISDICTION,
-             "payrun_id": string("PayRun id.", maximum=200)},
+             "payrun_id": string("PayRun id.", maximum=200, format="id")},
             families=("evidence",),
         ),
         Capability(
@@ -214,8 +225,8 @@ def default_registry() -> CapabilityRegistry:
             "explaining why one employee's net pay differs between two runs: call it once "
             "per run being compared, for the same employee_id.",
             {"jurisdiction": _JURISDICTION,
-             "employee_id": string("Filter by employee id.", required=False, maximum=200),
-             "payrun_id": string("Filter by payrun id.", required=False, maximum=200),
+             "employee_id": string("Filter by employee id.", required=False, maximum=200, format="id"),
+             "payrun_id": string("Filter by payrun id.", required=False, maximum=200, format="id"),
              "limit": integer("Max rows to return.", required=False, default=10, minimum=1, maximum=100)},
             families=("evidence",),
         ),
@@ -230,7 +241,7 @@ def default_registry() -> CapabilityRegistry:
             {"jurisdiction": _JURISDICTION,
              "month": string("Pay month as YYYY-MM.", format="month"),
              "payrun_id": string("Existing PayRun to recalculate instead of the month's own.",
-                                 required=False, maximum=200)},
+                                 required=False, maximum=200, format="id")},
             side_effect=True,
         ),
         Capability(
@@ -240,7 +251,7 @@ def default_registry() -> CapabilityRegistry:
             "just this agent's policy -- so this only ever hands the run to a human "
             "approver; it never finishes the job on its own.",
             {"jurisdiction": _JURISDICTION,
-             "payrun_id": string("PayRun id to submit.", maximum=200)},
+             "payrun_id": string("PayRun id to submit.", maximum=200, format="id")},
             side_effect=True,
         ),
         Capability(

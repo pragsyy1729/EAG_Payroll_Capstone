@@ -32,6 +32,28 @@ class PlannerOutputError(ValueError):
     """The model's proposal was not a safe, executable next frontier."""
 
 
+def _collect_strings(value: Any, into: set[str]) -> None:
+    if isinstance(value, str):
+        into.add(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_strings(item, into)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _collect_strings(item, into)
+
+
+class _Provenance:
+    """Membership test for "has this run seen this value": exact match against any
+    string in the evidence, or a substring of the user's goal."""
+
+    def __init__(self, goal: str, seen: set[str]) -> None:
+        self.goal, self.seen = goal, seen
+
+    def __contains__(self, value: object) -> bool:
+        return isinstance(value, str) and (value in self.seen or value in self.goal)
+
+
 def _clip(value: Any, *, chars: int = 4_000, depth: int = 0) -> Any:
     """Bound planner context while retaining the evidence needed to replan."""
     if depth > 9:
@@ -281,7 +303,8 @@ class PayrollPlanner:
                 raise PlannerOutputError(f"invalid task id {node_id!r}")
             if not isinstance(skill, str):
                 raise PlannerOutputError(f"task {node_id} has no capability")
-            arguments = self.registry.validate(skill, raw.get("arguments", {}))
+            arguments = self.registry.validate(skill, raw.get("arguments", {}),
+                                               known_values=self._provenance(graph))
             equivalent_active = [existing_id for existing_id, existing in graph.nodes.items()
                                  if existing["state"] in {"pending", "running", "waiting"}
                                  and existing_id not in cancel
@@ -356,6 +379,16 @@ class PayrollPlanner:
             reason = f"launched runnable frontier; held future tasks {', '.join(held_for_future)} until outcomes land"
         return GraphPatch(add=tuple(tasks), connect=tuple(edges), cancel=tuple(cancel),
                           finish=finish, reason=reason)
+
+    def _provenance(self, graph: GraphSnapshot) -> "_Provenance":
+        """Everything the run has genuinely seen: the goal, the stimulus, and the
+        outcomes of tasks that succeeded. Failed or unfinished tasks prove nothing."""
+        seen: set[str] = set()
+        _collect_strings(self.initial_evidence, seen)
+        for node in graph.nodes.values():
+            if node["state"] == "succeeded":
+                _collect_strings(node.get("result"), seen)
+        return _Provenance(self.goal, seen)
 
     def _prompt(self, graph: GraphSnapshot, event: Event) -> str:
         nodes = []
@@ -438,6 +471,9 @@ class PayrollPlanner:
             "equivalent work. Add the response-mode terminal capability only when its evidence is ready. "
             "A jurisdiction (IN or US) is required on every AgentSwitch-backed capability: if the goal "
             "does not say which, ask via the terminal answer rather than guessing one. "
+            "An employee's id is the `id` of an Employee record, or the `employee_id` on rows of other "
+            "entities such as payslips. Never use `company_id`, `department_id`, `party_id`, `created_by` "
+            "or any other `*_id` that names a different kind of record, and never another employee's id. "
             "A month named without a year (for example 'August') means its most recent occurrence "
             "on or before `today`, never an earlier year; state the resolved YYYY-MM in your reason. "
             "The runtime, not you, owns completion and authority enforcement."
