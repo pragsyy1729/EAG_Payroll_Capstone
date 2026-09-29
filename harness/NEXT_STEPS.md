@@ -1,7 +1,7 @@
 # Next Steps
 
-Status snapshot as of 2026-09-29. See `REQUIREMENTS.md` for the full
-requirements catalog and AgentSwitch integration details, and
+Status snapshot as of 2026-09-29 (end of day). See `REQUIREMENTS.md` for the
+full requirements catalog and AgentSwitch integration details, and
 `GAP_REPORT.md` for the week-one deliverable.
 
 ## What exists now
@@ -9,107 +9,135 @@ requirements catalog and AgentSwitch integration details, and
 - `payroll_agent/agentswitch.py` -- `AgentSwitchClient`. MCP-first, REST
   fallback for the four confirmed MCP-absent action groups (Form16/Form24Q
   generation, vault, reports, locale). Holds both jurisdiction tenants
-  (`IN`/`US`). Live-verified: successful `.list`/`.get` calls, the
-  JSON-RPC error-envelope path, an unconfigured-jurisdiction fail-loud
-  path, and one REST call.
+  (`IN`/`US`). Live-verified.
 - `payroll_agent/capabilities.py` -- seven capabilities: `list_employees`,
   `list_payruns`, `get_payrun`, `list_payrun_employees`, `run_payroll`,
-  `submit_payrun_for_approval`, `answer_with_evidence`. Deliberately a
-  small, curated MVP set, not a full port of AgentSwitch's ~96 payroll
-  tools.
-- `payroll_agent/planner.py` -- `PayrollPlanner`, a domain-agnostic
-  capability-driven planner (asks an LLM for the next runnable frontier,
-  validates everything in Python before it can enter the graph).
-- `payroll_agent/workers.py` -- one async function per capability, each a
-  thin call into `AgentSwitchClient`; `answer_with_evidence` reads the
-  graph's own journal as its only evidence source.
-- `payroll_agent/run.py` -- CLI runner wiring all of the above plus
-  `core/live_graph` into one executable run. No `main.py`/FastAPI service
-  yet; this is the direct, inspectable way to run one goal at a time in
-  the meantime.
-- `payroll_agent/gateway.py` -- gained a `PAYROLL_GATEWAY_MODEL` env-var
-  override (see "Fixed today" below).
+  `submit_payrun_for_approval`, `answer_with_evidence`. Id arguments carry
+  `format="id"`, which turns on the provenance check (below).
+- `payroll_agent/planner.py` -- `PayrollPlanner`. Now receives today's date,
+  resolves a bare month ("August") to its most recent occurrence, and
+  validates every id-valued argument against evidence the run has actually
+  seen (goal, initial evidence, succeeded outcomes). System prompt states
+  which `*_id` fields are an employee's id and which are not.
+- `payroll_agent/workers.py` -- one async function per capability.
+- `payroll_agent/run.py` -- CLI runner. No `main.py`/FastAPI service yet.
+- `payroll_agent/gateway.py` -- `PAYROLL_GATEWAY_MODEL` env override.
+  `.env` (gitignored) currently sets `gemini-3.5-flash`.
 
-## Fixed today
+## Done today
 
-- **Deprecated default model.** The shared `glc_v5` gateway instance
-  (`session_17/glc_v5`, not this project's own copy -- a long-running
-  process this project doesn't own the lifecycle of) still defaults its
-  Gemini pool to `gemini-2.5-flash`, which Google has deprecated (confirmed
-  live: HTTP 404, replacement name given in the error body). Fixed
-  entirely on our side, without touching the shared instance: `.env`'s
-  `PAYROLL_GATEWAY_MODEL=gemini-3.8-flash` is passed as a per-call
-  override in `gateway.py`. Confirmed working live.
+- **`run_payroll` guard** (`workers.py`). `PayRun.run_payroll` *reuses* an
+  existing run for the month and rewrites its slips. The worker now looks up
+  the month's regular runs by period dates (not labels) and refuses unless
+  every match is `draft` or `review`; an explicit `payrun_id` is checked the
+  same way. Refusal is returned as `run_exists_not_recalculable` with the
+  existing run, and the answer step is told to report it as "not performed".
+- **Date-based month lookup.** `list_payruns` takes `month` (YYYY-MM) and
+  matches on `pay_period_start`. The label filter missed "Aug 2026" when
+  asked for "2026-08".
+- **Wrong-year fix.** The planner used 2025-08 for "August"; it now sees
+  `today` and picks 2026-08.
+- **Evidence critic** accepts a runtime refusal as ready evidence (before,
+  a guarded run ended with no answer).
+- **Provenance check** rejects invented ids before they reach AgentSwitch.
 
-## Verified live, partially
+## Verified live
 
-The full `capabilities -> planner -> live_graph -> workers ->
-AgentSwitchClient -> real platform` pipeline is proven correct: given the
-goal "Run August payroll" (jurisdiction IN), the planner correctly chose
-to check existing state first (`list_payruns`) rather than guess, the
-worker executed it, and real historical `PayRun` records (Jan/Feb/Mar 2026,
-with real totals) came back from AgentSwitch.
+- **"Run August payroll" (IN)**: resolves 2026-08, finds `PRUN-2026-00012`
+  (`pending_approval`), refuses to recalculate, answers that the action was
+  NOT performed. No new PayRun created (count stayed 15).
 
-**Not yet confirmed:** a complete run through `run_payroll` execution to a
-final synthesized answer. Every attempt today was cut short by the shared
-gateway's Gemini key pool hitting rate-limit backoff from repeated testing
-in this session -- not a code defect. `gemini_1` had a real, normally
--counting-down ~8-minute timeout backoff; `gemini_2` appeared to re-trigger
-a short backoff on each attempt while `gemini_1` was still down.
+## NOT verified
 
-## Immediate next step
+- **"Why is Ramesh's net pay lower this month?"** has never completed a live
+  run. Best so far: three lookups, then a Gemini 503. Observed failures:
+  the planner picked `company_id`, `department_id`, `created_by` and another
+  employee's id as Ramesh's id, and once invented one. The real id
+  (`Employee.id`, `f8e8a973-...`) was never tried. The provenance check and
+  the id-precedence prompt are meant to fix this but are untested in a
+  finished run.
+- Whether `PayRunEmployee.employee_id` equals `Employee.id` (assumed, not
+  confirmed).
+- "This month" ambiguity: September's run (`PRUN-2026-00013`) is a `draft`
+  with 51 employees; August (`PRUN-2026-00012`) has 65 slips.
 
-1. **Retry the full MVP run once the gateway's backoff has cleared:**
-   ```bash
-   cd harness
-   .venv/bin/python -m payroll_agent.run "Run August payroll" \
-       --jurisdiction IN --allow run_payroll
-   ```
-   Check `patch_events` in the output if it fails again -- that's where
-   the planner's own failure reason is recorded (see `run.py`, added
-   today for exactly this diagnosis).
-2. Then try the second MVP flow, which hasn't been attempted live yet:
-   ```bash
-   .venv/bin/python -m payroll_agent.run \
-       "Why is Ramesh's net pay lower this month?" --jurisdiction IN
-   ```
-   Expect this to need `list_employees` (resolve "Ramesh" -> employee_id)
-   then two `list_payrun_employees` calls (current + prior period) before
-   `answer_with_evidence`. No side effects needed for this flow (nothing
-   in `--allow`), since it's read-only.
+## Blocker: Gemini quota
 
-## Near-term (this milestone)
+The shared `glc_v5` gateway (`session_17/glc_v5`, started manually with
+`uv run glc serve`, log at `/private/tmp/claude-501/glc_serve.log`) has only
+**two** Gemini keys (`GEMINI_API_KEY_1/2`) and no other provider keys.
+After ~260 calls it returns 503 "RPM quota burned" even after 7 minutes of
+quiet. Likely a daily limit mislabelled as RPM (`glc/routes/chat.py:362`
+classifies any 429 containing "quota" as RPM); unconfirmed.
 
-- [ ] Add an offline/deterministic LLM transport for local testing, mirror
-      of the pattern in `S17Code/proofs/harness.py`'s `OfflineTransport` --
-      would have let today's wiring verification happen without burning
-      live Gemini quota, and matters more once an evaluation harness needs
-      to run repeatedly.
-- [ ] Confirm `PayRun.create`'s `run_type=off_cycle` path end-to-end (schema
-      confirmed reachable over MCP; not yet exercised live).
+Ways out, in order of effort:
+1. Wait for the daily reset (Google free tier: midnight Pacific), rerun.
+2. Add a third key from a *separate* Google project as `GEMINI_API_KEY_3`
+   (pool is built from `GEMINI_API_KEY_1..MAX_GEMINI_KEYS`), restart gateway.
+3. Add a non-Gemini provider key (Groq etc.); `routing.yaml` already lists
+   them as fallbacks.
+4. Offline scripted transport (below).
+
+Retry commands (from `harness/`, gateway must be running on :8111):
+```bash
+.venv/bin/python -m payroll_agent.run "Why is Ramesh's net pay lower this month?" --jurisdiction IN
+.venv/bin/python -m payroll_agent.run "Run August payroll" --jurisdiction IN --allow run_payroll
+```
+The second is safe to repeat: the guard refuses while August is
+`pending_approval`. Check `patch_events` in the output for planner failures.
+Save output to a file: only the tail is easy to see in a terminal.
+
+## Open issues on shared AgentSwitch data
+
+- Our earlier unguarded run wrote **65 payslips** (created 2026-09-29
+  15:44 UTC, `created_by: system`) under `PRUN-2026-00012`, a run already in
+  `pending_approval`. Our seat has no delete/cancel for slips or non-draft
+  runs, so it cannot be undone from here. Unknown whether the run header
+  totals changed (`updated_at` still 2026-09-12). Tell the team / organizers.
+- Candidate AgentSwitch bug report (100 pts each): `PayRun.run_payroll`
+  silently rewrites slips of a `pending_approval` run.
+- Cancelled our own stray draft `PRUN-2026-00015` ("August 2025").
+
+## Near-term
+
+- [ ] Get the Ramesh flow to complete live, then check the answer against
+      the raw `PayRunEmployee` rows (net-pay difference explained by
+      components, not invented).
+- [ ] Wrap the evidence-review LLM call in `planner.py` (~line 172): a
+      gateway 503 there raises uncaught instead of failing visibly like the
+      main planner call.
+- [ ] Offline/deterministic *scripted* LLM transport (return a preset
+      sequence of plans; simulate 503). The S17Code `OfflineTransport` only
+      returns canned text, which a planner cannot use. Needed for repeatable
+      evaluation runs and to stop burning quota.
+- [ ] Answer text had a stray `August 20%2026` (URL-encoding artifact);
+      find the source.
 - [ ] Design and build the evaluation harness (`REQUIREMENTS.md` SS14b/SS15):
-      `Proof`-style checks collector + declarative task file, extended
-      with verifiers that re-read AgentSwitch itself post-run, not just
-      payroll_agent's own graph journal.
-- [ ] Choose the deliberate refusal-task example (grading requirement 4 --
-      something the data can't support or the seat isn't permitted to do;
-      the agent must say so, not invent a confident answer).
-- [ ] Revisit `GAP_REPORT.md` question 2 now that live tool-catalogue
-      evidence exists (approval quorum via the generic `approvals` domain,
-      draft-state dry-run simulation, and the nightly-scan pattern all look
-      orchestration-buildable, not "none").
-- [ ] `payroll_agent/main.py` -- an actual FastAPI service, once the CLI
-      runner has proven the two MVP flows end-to-end.
+      own run loop, task file, verifiers that re-read AgentSwitch itself,
+      every run written to disk before scoring. Graded test assertions must
+      be hand-written by the team, not generated.
+- [ ] Choose the refusal-task example (something the data can't support or
+      the seat isn't permitted to do). The `run_payroll` refusal on a
+      pending run is a natural candidate.
+- [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
+      orchestration-buildable.
+- [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
+
+## Deliberately not done
+
+- Evidence summarizer for the planner (labelled `id:` blocks per record).
+  Judged too much code fitted to one failure; prefer a stronger model or a
+  provider with more quota first.
+- Per-capability field-source mapping for ids: does not scale with ~96
+  tools. Basic provenance only. Wrong-kind ids that exist in evidence are
+  not caught by code; the prompt guidance covers them.
 
 ## Not urgent, but tracked
 
-- [ ] Extend `capabilities.py` beyond the 7-capability MVP set toward the
-      fuller requirements catalog (`REQUIREMENTS.md` SS2-SS13), likely by
-      deriving capabilities from AgentSwitch's own scoped `tools/list`
-      JSON Schemas rather than continuing to hand-write them one at a time.
-- [ ] Run the Keystone (US) probe's equivalent live MVP verification (so
-      far only Suryodaya/India has been exercised end-to-end).
-- [ ] Research a best-in-class reference payroll product (integration
-      guide's Step 2; `GAP_REPORT.md` lists Rippling/Gusto/Keka/greytHR/
-      Deel/Dayforce as the six features' cited references, not yet
-      independently studied).
+- [ ] Extend capabilities beyond the 7-capability MVP, ideally derived from
+      AgentSwitch's scoped `tools/list` schemas.
+- [ ] Keystone (US) live verification of the MVP flows.
+- [ ] `PayRun.create` with `run_type=off_cycle` end to end.
+- [x] Study a reference payroll product (integration guide Step 2). Done:
+      `GAP_REPORT.md` is the result (six gaps vs. Rippling/Gusto/Keka/
+      greytHR/Deel/Dayforce). Only its question-2 revision is still open.
