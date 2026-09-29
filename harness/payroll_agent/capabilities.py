@@ -188,9 +188,13 @@ def default_registry() -> CapabilityRegistry:
         ),
         Capability(
             "list_payruns",
-            "List PayRun records, optionally filtered by pay period, to check whether a "
-            "run for a given month already exists and what state it is in.",
+            "List PayRun records, to check whether a run for a given month already exists and "
+            "what state it is in. To check a month, pass `month` (YYYY-MM): it matches on the "
+            "run's actual period dates and returns every run for that month. Do not filter by "
+            "`pay_period` for that -- labels vary ('Aug 2026', 'Sep 2025', 'Bonus').",
             {"jurisdiction": _JURISDICTION,
+             "month": string("Return only runs whose period starts in this month (YYYY-MM).",
+                             required=False, format="month"),
              "pay_period": string("Filter by pay period label.", required=False, maximum=200),
              "limit": integer("Max rows to return.", required=False, default=10, minimum=1, maximum=100)},
             families=("evidence",),
@@ -218,8 +222,11 @@ def default_registry() -> CapabilityRegistry:
         Capability(
             "run_payroll",
             "Open (or reuse) the pay run for a month and calculate draft salary slips. "
-            "This is the real payroll calculation -- a mutation, not a read. It only ever "
-            "produces a DRAFT; it does not submit, approve, or disburse anything.",
+            "This is the real payroll calculation -- a mutation, not a read. It never "
+            "submits, approves, or disburses, but it REUSES an existing run for the month and "
+            "rewrites that run's slips. The runtime refuses it when the month's run is past "
+            "`review` (pending_approval, approved, paid, cancelled) and returns "
+            "`run_exists_not_recalculable` with the existing run instead -- report that, do not retry.",
             {"jurisdiction": _JURISDICTION,
              "month": string("Pay month as YYYY-MM.", format="month"),
              "payrun_id": string("Existing PayRun to recalculate instead of the month's own.",
