@@ -1,0 +1,1 @@
+{"name": "scaffold_fault_503", "note": "Scaffold only: the first planner call hits a gateway 503.", "steps": [{"fault": "503"}]}

@@ -1,0 +1,15 @@
+{
+  "name": "scaffold_august_lookup",
+  "note": "Scaffold only, exercises the transport. Read-only: list_payruns for 2026-08, then answer.",
+  "steps": [
+    {"reply": {"add": [{"id": "lookup", "capability": "list_payruns",
+                        "arguments": {"jurisdiction": "IN", "month": "2026-08"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "check which runs exist for August 2026"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "What payroll runs exist for August 2026?"},
+                        "depends_on": ["lookup"]}],
+               "cancel": [], "finish": false, "reason": "lookup succeeded; answer from it"}},
+    {"reply": {"ready": true, "missing": [], "reason": "run list for the month is present"}},
+    {"reply": "Scripted answer: see the list_payruns evidence for the runs found for 2026-08."}
+  ]
+}
