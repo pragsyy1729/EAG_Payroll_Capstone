@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
 
-from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from . import scan_checks
+from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
 TextLLM = Callable[[str, str], Awaitable[dict[str, Any]]]
