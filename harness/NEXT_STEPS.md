@@ -116,6 +116,12 @@ built/partial/todo status. Proposed order:
        example exit date 2026-08-31, scanned run July) is flagged as paid while
        `left`. Proposed fix, needs a decision: when `exit_date` is after the
        period end, downgrade the status finding to `info` (or drop it).
+   Deferred review minors (pre_payroll_scan, none block use): `PayRun.list` is
+   not paged, so a tenant with over 100 runs skips the change check; an explicit
+   `compare_to` equal to the scanned run, or a later/bonus/cancelled run, is
+   accepted; only the 3 most recent earlier runs are tried for a calculated
+   baseline; final-settlement employees (exit inside the period) are flagged high;
+   worker tests do not cover a short comparison run or a short `Employee.list`.
 3. [ ] **D: variance and cost reports** (month-over-month, by department).
 4. [ ] **G: refusal tasks**: approve payrun, delete non-draft run, cross-app
        read, bank file. The pending-run refusal already works.
