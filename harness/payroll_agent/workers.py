@@ -101,24 +101,36 @@ _MAX_PAGES = 20
 _MAX_COMPARE_CANDIDATES = 3
 
 
+def _scan_incomplete(problem: str) -> dict[str, Any]:
+    return {"error": True, "tool": "pre_payroll_scan", "code": "scan_incomplete", "message": problem}
+
+
 async def _fetch_all(ctx: RunContext, tool: str, args: dict[str, Any],
-                     jurisdiction: str) -> tuple[list[dict[str, Any]], str | None]:
-    """Every row of a list tool, or (rows so far, reason) when it failed or came up short."""
+                     jurisdiction: str) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Every row of a list tool, or (rows so far, error result): the tool's own error
+    unchanged (a refusal keeps its code), or scan_incomplete when the rows came up short."""
     rows: list[dict[str, Any]] = []
     total: int | None = None
+    done = False
     for _ in range(_MAX_PAGES):
         page = await _call_tool(ctx, tool, {**args, "limit": _PAGE_SIZE, "offset": len(rows)}, jurisdiction)
         if page.get("error"):
-            return rows, f"{tool} failed: {page.get('message')}"
+            return rows, page
         data = page.get("data")
         if not isinstance(data, list):
-            return rows, f"{tool} returned no row list"
+            return rows, _scan_incomplete(f"{tool} returned no row list")
         rows.extend(data)
         total = page.get("total", total)
-        if not data or total is None or len(rows) >= total:
+        if not data or (total is not None and len(rows) >= total):
+            done = True
             break
+        if total is None and len(data) < _PAGE_SIZE:
+            done = True  # no total reported: a short page is the last one
+            break
+    if not done:
+        return rows, _scan_incomplete(f"{tool} incomplete: page limit reached after {len(rows)} rows")
     if total is not None and len(rows) < total:
-        return rows, f"{tool} incomplete: fetched {len(rows)} of {total} rows"
+        return rows, _scan_incomplete(f"{tool} incomplete: fetched {len(rows)} of {total} rows")
     return rows, None
 
 
@@ -129,7 +141,7 @@ async def _comparison_rows(ctx: RunContext, run: dict[str, Any], explicit: str |
     if explicit:
         rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": explicit}, jurisdiction)
         if problem:
-            return explicit, None, problem
+            return explicit, None, problem["message"]
         if not scan_checks.is_calculated(rows):
             return explicit, None, "comparison run has no calculated rows"
         return explicit, rows, none_reason
@@ -140,22 +152,23 @@ async def _comparison_rows(ctx: RunContext, run: dict[str, Any], explicit: str |
     if listing.get("error"):
         return None, None, f"PayRun.list failed: {listing.get('message')}"
     data = listing.get("data", [])
-    if listing.get("total", 0) > len(data):
+    if (listing.get("total") or 0) > len(data):
         return None, None, "more PayRun records exist than could be checked"
+
+    def started(candidate: dict[str, Any]) -> str:
+        return str(candidate.get("pay_period_start") or "")[:10]
+
+    # A run with no start date cannot be placed in time, so it is never the baseline.
     earlier = sorted((r for r in data if r.get("run_type") == "regular" and r.get("status") != "cancelled"
-                      and r.get("id") != run.get("id") and str(r.get("pay_period_start") or "")[:10] < start),
-                     key=lambda r: str(r["pay_period_start"]), reverse=True)
+                      and r.get("id") != run.get("id") and started(r) and started(r) < start),
+                     key=started, reverse=True)
     for candidate in earlier[:_MAX_COMPARE_CANDIDATES]:
         rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": candidate["id"]}, jurisdiction)
         if problem:
-            return candidate["id"], None, problem
+            return candidate["id"], None, problem["message"]
         if scan_checks.is_calculated(rows):
             return candidate["id"], rows, none_reason
     return None, None, none_reason
-
-
-def _scan_incomplete(problem: str) -> dict[str, Any]:
-    return {"error": True, "tool": "pre_payroll_scan", "code": "scan_incomplete", "message": problem}
 
 
 async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
@@ -166,14 +179,17 @@ async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any
         return run
     rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
     if problem:
-        return _scan_incomplete(problem)
-    employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
-    if problem:
-        return _scan_incomplete(problem)
+        return problem
+    employees: list[dict[str, Any]] = []
     compared_to: str | None = None
     prev_rows: list[dict[str, Any]] | None = None
     prev_reason = "no earlier calculated regular run"
+    # An uncalculated run needs nothing more: answer "not calculated" without
+    # depending on the employee list or a comparison run.
     if scan_checks.is_calculated(rows):
+        employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
+        if problem:
+            return problem
         compared_to, prev_rows, prev_reason = await _comparison_rows(
             ctx, run, task.input.get("compare_to"), jurisdiction)
         if prev_rows is None:

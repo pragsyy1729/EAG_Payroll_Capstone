@@ -125,3 +125,12 @@ def test_run_checks_caps_findings_but_not_counts():
     assert result["truncated"] is True
     assert result["counts"]["by_severity"] == {"high": 45}
     assert result["findings"][-1]["id"] == "F-040"
+
+
+def test_string_amounts_do_not_crash_and_evidence_keeps_the_raw_value():
+    assert sc.is_calculated([row("a", "400.00")])
+    assert not sc.is_calculated([row("a", "abc")])
+    found, _ = sc.net_pay_change([row("a", "400.00")], [row("a", "1000.00", run="R0")], 30)
+    assert found[0]["severity"] == "high"
+    assert found[0]["evidence"]["previous_net"] == "1000.00"
+    assert [f["employee_id"] for f in sc.net_pay_sanity([row("a", "abc"), row("b", "50.5")])] == ["a"]

@@ -15,15 +15,19 @@ from payroll_agent.core.live_graph import TaskSpec
 
 
 class FakeAgentSwitch:
-    def __init__(self, *, runs, slips, employees, page_cap=100, short_total=None):
+    def __init__(self, *, runs, slips, employees, page_cap=100, short_total=None,
+                 omit_total=False, denied=()):
         self.runs = {run["id"]: run for run in runs}
         self.slips, self.employees = slips, employees
         self.page_cap, self.short_total = page_cap, short_total
+        self.omit_total, self.denied = omit_total, set(denied)
         self.calls: list[tuple[str, dict]] = []
 
     async def call_tool(self, name, arguments=None, *, jurisdiction):
         arguments = arguments or {}
         self.calls.append((name, arguments))
+        if name in self.denied:
+            raise AgentSwitchToolError(name, -32001, "denied")
         if name == "PayRun.get":
             if arguments["id"] not in self.runs:
                 raise AgentSwitchToolError(name, -32000, "not found")
@@ -39,6 +43,7 @@ class FakeAgentSwitch:
     def _page(self, rows, arguments):
         offset, limit = arguments.get("offset", 0), min(arguments.get("limit", 10), self.page_cap)
         total = len(rows) if self.short_total is None else self.short_total
+        total = None if self.omit_total else total
         return {"data": rows[offset:offset + limit], "limit": limit, "offset": offset, "total": total}
 
 
@@ -168,3 +173,44 @@ def test_capability_is_registered_read_only_with_id_provenance():
             registry.validate("pre_payroll_scan",
                               {"jurisdiction": "IN", "payrun_id": "R3", "change_threshold_pct": bad},
                               known_values={"R3"})
+
+
+async def test_comparison_run_without_a_start_date_is_never_the_baseline():
+    null_start = {"id": "RN", "pay_period_start": None, "pay_period_end": None, "status": "paid", "run_type": "regular"}
+    no_key = {"id": "RM", "status": "paid", "run_type": "regular"}
+    fake = standard_fake(
+        runs=[run("R1", "2026-06-01", "2026-06-30"), run("R3", "2026-08-01", "2026-08-31"), null_start, no_key],
+        slips={"R1": [slip("R1", "a", 1000)], "R3": [slip("R3", "a", 1000)],
+               "RN": [slip("RN", "a", 1)], "RM": [slip("RM", "a", 1)]},
+        employees=[person("a")])
+    result = await scan(fake)
+    assert result["compared_to"] == "R1"
+
+
+async def test_full_page_without_a_total_keeps_paging():
+    rows = [slip("R3", f"e{i}", 100) for i in range(150)]
+    fake = standard_fake(slips={"R3": rows}, employees=[person(f"e{i}") for i in range(150)], omit_total=True)
+    result = await scan(fake)
+    assert result["counts"]["rows_checked"] == 150
+
+
+async def test_missing_total_and_page_limit_reached_is_scan_incomplete(monkeypatch):
+    monkeypatch.setattr(workers, "_MAX_PAGES", 1)
+    rows = [slip("R3", f"e{i}", 100) for i in range(150)]
+    fake = standard_fake(slips={"R3": rows}, employees=[person(f"e{i}") for i in range(150)], omit_total=True)
+    result = await scan(fake)
+    assert result["error"] is True and result["code"] == "scan_incomplete"
+
+
+async def test_tool_error_on_a_list_fetch_keeps_its_own_code():
+    fake = standard_fake(denied=("Employee.list",))
+    result = await scan(fake)
+    assert result["error"] is True
+    assert result["tool"] == "Employee.list" and result["code"] == -32001
+
+
+async def test_uncalculated_run_is_reported_even_if_the_employee_list_is_denied():
+    fake = standard_fake(slips={"R3": [slip("R3", "a", 0)]}, denied=("Employee.list",))
+    result = await scan(fake)
+    assert result["calculated"] is False
+    assert "Employee.list" not in [name for name, _ in fake.calls]

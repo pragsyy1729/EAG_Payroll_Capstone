@@ -18,9 +18,19 @@ _SEVERITY_ORDER = {"high": 0, "medium": 1, "info": 2}
 _INACTIVE_STATUSES = {"left", "suspended"}
 
 
+def _number(value: Any) -> float | None:
+    """Amounts may arrive as numbers or numeric strings; anything else is unusable."""
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def is_calculated(rows: list[dict[str, Any]]) -> bool:
     """A run with no rows, or only zero/missing net pay, has not been calculated."""
-    return any((row.get("net_pay") or 0) > 0 for row in rows)
+    return any((_number(row.get("net_pay")) or 0) > 0 for row in rows)
 
 
 def _finding(check: str, severity: str, row: dict[str, Any], evidence: dict[str, Any], message: str) -> dict[str, Any]:
@@ -77,8 +87,9 @@ def net_pay_change(rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]],
         if current_counts[key] > 1 or previous_counts[key] > 1:
             not_comparable += 1
             continue
-        before, after = previous[key].get("net_pay"), current[key].get("net_pay")
-        if not before or before <= 0 or after is None:
+        raw_before, raw_after = previous[key].get("net_pay"), current[key].get("net_pay")
+        before, after = _number(raw_before), _number(raw_after)
+        if before is None or before <= 0 or after is None:
             not_comparable += 1
             continue
         change = (after - before) / before * 100
@@ -89,7 +100,7 @@ def net_pay_change(rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]],
         else:
             continue
         found.append(_finding("net_pay_change", severity, current[key],
-                              {"previous_net": before, "current_net": after, "change_pct": round(change, 1)},
+                              {"previous_net": raw_before, "current_net": raw_after, "change_pct": round(change, 1)},
                               f"Net pay {'up' if change > 0 else 'down'} {abs(round(change, 1))}% vs the comparison run"))
     return found, {"new_in_run": new_in_run, "not_comparable": not_comparable}
 
@@ -97,7 +108,7 @@ def net_pay_change(rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]],
 def net_pay_sanity(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [_finding("net_pay_sanity", "high", row, {"net_pay": row.get("net_pay")},
                      "Net pay is zero, negative or missing")
-            for row in rows if row.get("net_pay") is None or row["net_pay"] <= 0]
+            for row in rows if (amount := _number(row.get("net_pay"))) is None or amount <= 0]
 
 
 def duplicate_payees(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
