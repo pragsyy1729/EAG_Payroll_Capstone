@@ -44,8 +44,11 @@ hunts outliers. The LLM only plans and explains; the sweep itself is code.
 - Employees missing PAN, UAN or ESI numbers.
 - Pending leave, attendance or reimbursement items that affect the run.
 
-Tools: `Employee`, `PayRunEmployee`, `Attendance`, `LeaveApplication`,
-`PayrollBankAccount`, `ReimbursementClaim`. Status: todo.
+Status: **partial**. `pre_payroll_scan` covers payee status, month-over-month
+net-pay change, net-pay sanity and duplicate payees, read-only. Duplicate bank
+accounts and missing PAN/UAN/ESI are blocked by field redaction for this seat;
+joiner/leaver proration and pending leave/attendance items are not built.
+Design: `docs/superpowers/specs/2026-09-30-pre-payroll-scan-design.md`.
 
 ## D. Reporting and analytics (read-only)
 

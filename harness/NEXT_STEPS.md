@@ -105,10 +105,17 @@ statutory, F lifecycle, G refusals), matched to the tools our seat has, with
 built/partial/todo status. Proposed order:
 
 1. [ ] **A: finish the Ramesh flow** (required query; needs the gateway).
-2. [ ] **C: pre-payroll risk scan** as one sweep capability, computed in
-       Python (LLM only plans and explains). Needs read capabilities over
-       `SalarySlip`, `Attendance`, `LeaveApplication`, `PayrollBankAccount`.
-       Design first (eval spec sub-project 2); not started.
+2. [x] **C: pre-payroll risk scan** built (`pre_payroll_scan`, read-only;
+       spec and plan in `docs/superpowers/`). Checked with scripted runs on the
+       real India tenant: July 2026 (paid) vs June found 2 high + 1 info
+       `payee_status` findings, no net-pay swings over 30%, 2 new payees, and
+       nothing mutating; the September draft (51 rows, uncalculated) reported
+       "not calculated" and flagged nothing. Not yet run with a live LLM.
+       **Known weakness:** `payee_status` uses today's `Employee.status`, not
+       status during the period, so someone who left after the period (for
+       example exit date 2026-08-31, scanned run July) is flagged as paid while
+       `left`. Proposed fix, needs a decision: when `exit_date` is after the
+       period end, downgrade the status finding to `info` (or drop it).
 3. [ ] **D: variance and cost reports** (month-over-month, by department).
 4. [ ] **G: refusal tasks**: approve payrun, delete non-draft run, cross-app
        read, bank file. The pending-run refusal already works.
@@ -130,6 +137,7 @@ new work is read wrappers plus Python computation.
 
 ## Near-term
 
+- [ ] Live LLM run of "check the July/September run" once Gemini recovers (scripted runs pass).
 - [ ] Get the Ramesh flow to complete live, then check the answer against
       the raw `PayRunEmployee` rows (net-pay difference explained by
       components, not invented).

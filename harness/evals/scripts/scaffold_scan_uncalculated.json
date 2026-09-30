@@ -1,0 +1,19 @@
+{
+  "name": "scaffold_scan_uncalculated",
+  "note": "Scaffold only. Scan the September draft, which has no calculated net pay. Read-only.",
+  "steps": [
+    {"reply": {"add": [{"id": "lookup", "capability": "list_payruns",
+                        "arguments": {"jurisdiction": "IN", "month": "2026-09"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "find the September 2026 run"}},
+    {"reply": {"add": [{"id": "scan", "capability": "pre_payroll_scan",
+                        "arguments": {"jurisdiction": "IN", "payrun_id": "b5b0cc7d-7aef-4738-a6e0-bfaa01c94aaa"},
+                        "depends_on": ["lookup"]}],
+               "cancel": [], "finish": false, "reason": "scan the September run"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "Check the September 2026 payroll run before we submit it."},
+                        "depends_on": ["scan"]}],
+               "cancel": [], "finish": false, "reason": "scan finished; answer from it"}},
+    {"reply": {"ready": true, "missing": [], "reason": "scan reports the run is not calculated"}},
+    {"reply": "Scripted answer: the September run is not calculated, so there is nothing to check yet."}
+  ]
+}
