@@ -35,11 +35,16 @@ async def run_goal(
     allowed_side_effects: set[str] | None = None,
     initial_evidence: dict | None = None,
     data_dir: Path | None = None,
+    llm=None,
+    agentswitch: AgentSwitchClient | None = None,
 ) -> dict:
+    """``llm`` replaces the gateway (an object with ``complete`` and ``close``);
+    ``agentswitch`` replaces the client, e.g. with a recording wrapper. Both
+    default to the real ones."""
     data_dir = data_dir or Path(tempfile.mkdtemp(prefix="payroll-run-"))
     store = GraphStore(data_dir / "graphs")
-    gateway = GatewayClient()
-    agentswitch = AgentSwitchClient()
+    gateway = llm or GatewayClient()
+    agentswitch = agentswitch or AgentSwitchClient()
     run_id = str(uuid.uuid4())
 
     ctx = RunContext(run_id=run_id, store=store, llm=gateway.complete, agentswitch=agentswitch, goal=goal)

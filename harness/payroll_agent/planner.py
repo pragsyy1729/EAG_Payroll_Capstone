@@ -154,22 +154,17 @@ class PayrollPlanner:
             try:
                 reply = await self.llm(request, self._system())
             except Exception as problem:
-                error = f"{type(problem).__name__}: {problem}"
-                self.history.append({"event": event.sequence, "attempt": attempt + 1,
-                                     "accepted": False, "error": error})
-                self.last_selection = {"mode": "planner_failed", "event": event.sequence,
-                                       "calls": len(self.history), "error": error,
-                                       "history": list(self.history)}
-                active = any(node["state"] in {"pending", "running", "waiting"}
-                             for node in graph.nodes.values())
-                return GraphPatch(finish=not active, reason=f"planner call failed visibly: {error}")
+                return self._call_failed(problem, graph, event, attempt)
             raw = str(reply.get("text", ""))
             try:
                 patch = self._parse(raw, graph)
                 if self.review_terminal and any(
                     task.skill in self.registry.terminal_skills(self.respond_as) for task in patch.add
                 ):
-                    review_reply = await self.llm(self._review_prompt(graph), self._review_system())
+                    try:
+                        review_reply = await self.llm(self._review_prompt(graph), self._review_system())
+                    except Exception as problem:
+                        return self._call_failed(problem, graph, event, attempt)
                     review = _json_object(str(review_reply.get("text", "")))
                     ready = review.get("ready")
                     missing = review.get("missing", [])
@@ -196,6 +191,18 @@ class PayrollPlanner:
         active = any(node["state"] in {"pending", "running", "waiting"}
                      for node in graph.nodes.values())
         return GraphPatch(finish=not active, reason=f"planner failed validation after repair: {error}")
+
+    def _call_failed(self, problem: Exception, graph: GraphSnapshot, event: Event, attempt: int) -> GraphPatch:
+        """An LLM call raised (gateway 503, timeout): stop visibly, never crash the run."""
+        error = f"{type(problem).__name__}: {problem}"
+        self.history.append({"event": event.sequence, "attempt": attempt + 1,
+                             "accepted": False, "error": error})
+        self.last_selection = {"mode": "planner_failed", "event": event.sequence,
+                               "calls": len(self.history), "error": error,
+                               "history": list(self.history)}
+        active = any(node["state"] in {"pending", "running", "waiting"}
+                     for node in graph.nodes.values())
+        return GraphPatch(finish=not active, reason=f"planner call failed visibly: {error}")
 
     def _stuck_verification(self, graph: GraphSnapshot) -> tuple[str, int] | None:
         if self.max_repeat_failures <= 0:
