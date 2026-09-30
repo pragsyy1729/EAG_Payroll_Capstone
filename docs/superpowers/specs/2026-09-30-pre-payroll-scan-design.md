@@ -110,7 +110,8 @@ an artifact; a clean pair (June to July) should be used alongside it.
 { "payrun_id", "run_status", "calculated": true|false,
   "compared_to": "<payrun id>" | null,
   "skipped": [{"check": "net_pay_change", "reason": "no earlier calculated regular run"}],
-  "counts": {"by_check": {...}, "by_severity": {...}, "new_in_run": 3, "rows_checked": 65},
+  "counts": {"by_check": {...}, "by_severity": {...}, "new_in_run": 3,
+             "not_comparable": 0, "rows_checked": 65},
   "findings": [ {id, check, severity, employee_id, employee_name, payrun_id,
                  evidence: {...values straight from fetched rows...}, message} ],
   "truncated": false }
@@ -129,9 +130,14 @@ an artifact; a clean pair (June to July) should be used alongside it.
 
 - A tool error on any fetch returns the ordinary `{"error": true, ...}`
   result (existing `_call_tool` behaviour); the answer step reports it.
-- A list that reports more rows than were fetched after paging marks the
-  scan `incomplete` and the affected check is listed under `skipped`, rather
-  than silently checking a partial set.
+- A list that reports more rows than were fetched after paging is never
+  checked as if it were whole. If the run's own rows or `Employee.list` are
+  short, the scan returns an error result with code `scan_incomplete`. If only
+  the comparison run is short, `net_pay_change` is listed under `skipped` with
+  the reason and the other checks still run.
+- Employees whose previous-run net pay is zero, missing, or who appear more
+  than once in either run cannot give a percentage change; they are counted in
+  `counts.not_comparable` and not flagged by `net_pay_change`.
 - The scan never writes. It makes only `.get` and `.list` calls, which the
   eval recorder classifies as non-mutating.
 
