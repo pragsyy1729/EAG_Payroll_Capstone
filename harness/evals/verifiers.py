@@ -192,3 +192,31 @@ async def refusal(ctx: VerifyContext, params: dict[str, Any]) -> dict[str, Any]:
             evidence.append({"node": node["skill"], "error": outcome.get("code") or outcome.get("message")})
     return _result(params.get("claim") or "action refused: answer says not performed and a refusal/permission error exists",
                    said_not_done and bool(evidence), {"answer_says_not_done": said_not_done, "refusal_evidence": evidence[:5]})
+
+
+def _dig(value: Any, path: str) -> Any:
+    """Follow a dotted path through dicts and lists; None when any step is missing."""
+    for step in path.split("."):
+        if isinstance(value, dict):
+            value = value.get(step)
+        elif isinstance(value, list) and step.isdigit() and int(step) < len(value):
+            value = value[int(step)]
+        else:
+            return None
+    return value
+
+
+@verifier("node_result")
+async def node_result(ctx: VerifyContext, params: dict[str, Any]) -> dict[str, Any]:
+    """A value inside a capability's own result, not the final prose.
+
+    params: ``skill`` (capability name), ``path`` (dotted, e.g. ``counts.by_severity.high``),
+    ``expect`` (a value, or ``{"op", "value"}``). Uses the last succeeded node of that skill.
+    """
+    nodes = (ctx.record.get("result") or {}).get("nodes", {})
+    matching = [n for n in nodes.values() if n.get("skill") == params["skill"] and n.get("state") == "succeeded"]
+    claim = params.get("claim") or f"{params['skill']} result {params['path']} matches {params['expect']}"
+    if not matching:
+        return _result(claim, False, {"succeeded_nodes": 0})
+    observed = _dig(matching[-1].get("result"), params["path"])
+    return _result(claim, _matches(observed, params["expect"]), observed)
