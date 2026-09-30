@@ -78,6 +78,16 @@ Ways out, in order of effort:
    them as fallbacks.
 4. Offline scripted transport (below).
 
+**2026-09-30 update:** the daily limit has reset and the gateway (started
+with `uv run glc serve` from `session_17/glc_v5`) answers. Live eval run of
+`scaffold_august_refusal`: planner calls 1-2 succeeded (real `PayRun.list` +
+`PayRun.get`, found `PRUN-2026-00012` `pending_approval`), call 3 failed twice
+in a row, first with "RPM quota burned (~40s)" at 2s pacing, then with
+"upstream 503" at 15s pacing (`--min-interval 15`). Probes show Gemini
+latency of 8-9s for a 3-token call with retries, so the upstream is
+overloaded or flaky, not out of quota. The harness scored both runs
+`infra_error`, and the watched state was identical before/after.
+
 Retry commands (from `harness/`, gateway must be running on :8111):
 ```bash
 .venv/bin/python -m payroll_agent.run "Why is Ramesh's net pay lower this month?" --jurisdiction IN
@@ -86,6 +96,26 @@ Retry commands (from `harness/`, gateway must be running on :8111):
 The second is safe to repeat: the guard refuses while August is
 `pending_approval`. Check `patch_events` in the output for planner failures.
 Save output to a file: only the tail is easy to see in a terminal.
+
+## Workflow roadmap (2026-09-30)
+
+`WORKFLOWS.md` lists every query the agent should answer, by family (A
+employee "why", B run lifecycle, C pre-payroll checks, D reporting, E
+statutory, F lifecycle, G refusals), matched to the tools our seat has, with
+built/partial/todo status. Proposed order:
+
+1. [ ] **A: finish the Ramesh flow** (required query; needs the gateway).
+2. [ ] **C: pre-payroll risk scan** as one sweep capability, computed in
+       Python (LLM only plans and explains). Needs read capabilities over
+       `SalarySlip`, `Attendance`, `LeaveApplication`, `PayrollBankAccount`.
+       Design first (eval spec sub-project 2); not started.
+3. [ ] **D: variance and cost reports** (month-over-month, by department).
+4. [ ] **G: refusal tasks**: approve payrun, delete non-draft run, cross-app
+       read, bank file. The pending-run refusal already works.
+5. [ ] B/E/F extras (dry-run calculate, payslips, statutory dues, FnF).
+
+The existing 7 capabilities cover only A (partly) and B (run/submit). Most
+new work is read wrappers plus Python computation.
 
 ## Open issues on shared AgentSwitch data
 
@@ -103,19 +133,33 @@ Save output to a file: only the tail is easy to see in a terminal.
 - [ ] Get the Ramesh flow to complete live, then check the answer against
       the raw `PayRunEmployee` rows (net-pay difference explained by
       components, not invented).
-- [ ] Wrap the evidence-review LLM call in `planner.py` (~line 172): a
-      gateway 503 there raises uncaught instead of failing visibly like the
-      main planner call.
-- [ ] Offline/deterministic *scripted* LLM transport (return a preset
-      sequence of plans; simulate 503). The S17Code `OfflineTransport` only
-      returns canned text, which a planner cannot use. Needed for repeatable
-      evaluation runs and to stop burning quota.
+- [x] Evidence-review LLM call in `planner.py` now fails visibly (shared
+      `_call_failed` helper); verified by injecting a 503 at that call.
+- [x] Offline/deterministic *scripted* LLM transport: `evals/transport.py`
+      (`ScriptedLLM`, same `complete`/`close` surface as `GatewayClient`;
+      replays JSON scripts from `evals/scripts/`, injects 429/502/503/timeout
+      at a chosen call index). `run_goal(..., llm=, agentswitch=)` accepts it.
+      Checked: happy path, 503 at planner call, exhausted script. It
+      reproduced the uncaught evidence-review 503 (next item) deterministically:
+      a fault at call index 2 of `scaffold_august_lookup.json` raises out of
+      `run_goal`.
 - [ ] Answer text had a stray `August 20%2026` (URL-encoding artifact);
       find the source.
-- [ ] Design and build the evaluation harness (`REQUIREMENTS.md` SS14b/SS15):
-      own run loop, task file, verifiers that re-read AgentSwitch itself,
-      every run written to disk before scoring. Graded test assertions must
-      be hand-written by the team, not generated.
+- [x] Evaluation harness **core** built in `evals/` (runner, recorder,
+      snapshot, verifiers, scoring, scripted + paced transports). Run:
+      `.venv/bin/python -m evals.runner [--family F] [--task-id ID] [--live]`.
+      Exit 0 pass / 1 fail / 2 infra-only. Raw record is written to
+      `evals/runs/<ts>/<id>.json` before verifiers run; scores go to
+      `<id>.score.json`. Checked with scaffold tasks only: pass, fail and
+      infra_error paths, bad task file, gateway-down preflight. NOT yet
+      checked: a live-LLM run (gateway was down), an armed `--live` mutating
+      task, non-first-page snapshots, `state_changed`, `agentswitch_state`,
+      `answer_grounded`, `refusal` against real data.
+- [ ] **Team writes the graded tasks** (`evals/tasks/*.jsonl`, `authored_by:
+      "team"`): goals, verifiers and expected values. `scaffold.jsonl` only
+      shows the format and proves the mechanism.
+- [ ] Sub-projects 2 and 3 of the eval spec (check workflows; guarded-action
+      workflows).
 - [ ] Choose the refusal-task example (something the data can't support or
       the seat isn't permitted to do). The `run_payroll` refusal on a
       pending run is a natural candidate.

@@ -108,6 +108,7 @@ The second flow is read-only, so it needs no `--allow` flags. See
 |---|---|
 | `harness/REQUIREMENTS.md` | The full payroll requirements catalog (India + US statutory compliance, exceptions, garnishments, audit/fraud, reporting), the AgentSwitch integration mechanics (MCP protocol, auth, live-probe findings), and the grading rubric. |
 | `harness/GAP_REPORT.md` | Week-one deliverable: feature gaps against reference payroll products, and which are buildable via orchestration vs. need platform work. |
+| `harness/WORKFLOWS.md` | The queries the agent must answer, by family, matched to the AgentSwitch tools our seat can reach, with build status. |
 | `harness/NEXT_STEPS.md` | Current build status and prioritized next steps. |
 
 ## Status
