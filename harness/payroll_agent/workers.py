@@ -20,6 +20,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from .agentswitch import AgentSwitchClient, AgentSwitchToolError
+from . import scan_checks
 from .core.live_graph import TaskSpec
 
 TextLLM = Callable[[str, str], Awaitable[dict[str, Any]]]
@@ -95,6 +96,95 @@ async def run_list_payrun_employees(ctx: RunContext, task: TaskSpec) -> dict[str
     return await _call_tool(ctx, "PayRunEmployee.list", _pass_through(task), task.input["jurisdiction"])
 
 
+_PAGE_SIZE = 100
+_MAX_PAGES = 20
+_MAX_COMPARE_CANDIDATES = 3
+
+
+async def _fetch_all(ctx: RunContext, tool: str, args: dict[str, Any],
+                     jurisdiction: str) -> tuple[list[dict[str, Any]], str | None]:
+    """Every row of a list tool, or (rows so far, reason) when it failed or came up short."""
+    rows: list[dict[str, Any]] = []
+    total: int | None = None
+    for _ in range(_MAX_PAGES):
+        page = await _call_tool(ctx, tool, {**args, "limit": _PAGE_SIZE, "offset": len(rows)}, jurisdiction)
+        if page.get("error"):
+            return rows, f"{tool} failed: {page.get('message')}"
+        data = page.get("data")
+        if not isinstance(data, list):
+            return rows, f"{tool} returned no row list"
+        rows.extend(data)
+        total = page.get("total", total)
+        if not data or total is None or len(rows) >= total:
+            break
+    if total is not None and len(rows) < total:
+        return rows, f"{tool} incomplete: fetched {len(rows)} of {total} rows"
+    return rows, None
+
+
+async def _comparison_rows(ctx: RunContext, run: dict[str, Any], explicit: str | None,
+                           jurisdiction: str) -> tuple[str | None, list[dict[str, Any]] | None, str]:
+    """(comparison run id, its rows, reason when there are none)."""
+    none_reason = "no earlier calculated regular run"
+    if explicit:
+        rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": explicit}, jurisdiction)
+        if problem:
+            return explicit, None, problem
+        if not scan_checks.is_calculated(rows):
+            return explicit, None, "comparison run has no calculated rows"
+        return explicit, rows, none_reason
+    start = str(run.get("pay_period_start") or "")[:10]
+    if not start:
+        return None, None, "run has no pay_period_start to compare from"
+    listing = await _call_tool(ctx, "PayRun.list", {"limit": _PAGE_SIZE}, jurisdiction)
+    if listing.get("error"):
+        return None, None, f"PayRun.list failed: {listing.get('message')}"
+    data = listing.get("data", [])
+    if listing.get("total", 0) > len(data):
+        return None, None, "more PayRun records exist than could be checked"
+    earlier = sorted((r for r in data if r.get("run_type") == "regular" and r.get("status") != "cancelled"
+                      and r.get("id") != run.get("id") and str(r.get("pay_period_start") or "")[:10] < start),
+                     key=lambda r: str(r["pay_period_start"]), reverse=True)
+    for candidate in earlier[:_MAX_COMPARE_CANDIDATES]:
+        rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": candidate["id"]}, jurisdiction)
+        if problem:
+            return candidate["id"], None, problem
+        if scan_checks.is_calculated(rows):
+            return candidate["id"], rows, none_reason
+    return None, None, none_reason
+
+
+def _scan_incomplete(problem: str) -> dict[str, Any]:
+    return {"error": True, "tool": "pre_payroll_scan", "code": "scan_incomplete", "message": problem}
+
+
+async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch, then let scan_checks judge. Never calls a mutating tool."""
+    jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
+    run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
+    if run.get("error"):
+        return run
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
+    if problem:
+        return _scan_incomplete(problem)
+    employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
+    if problem:
+        return _scan_incomplete(problem)
+    compared_to: str | None = None
+    prev_rows: list[dict[str, Any]] | None = None
+    prev_reason = "no earlier calculated regular run"
+    if scan_checks.is_calculated(rows):
+        compared_to, prev_rows, prev_reason = await _comparison_rows(
+            ctx, run, task.input.get("compare_to"), jurisdiction)
+        if prev_rows is None:
+            compared_to = None
+    result = scan_checks.run_checks(
+        rows=rows, prev_rows=prev_rows, employees=employees, period_end=run.get("pay_period_end"),
+        threshold_pct=task.input.get("change_threshold_pct", scan_checks.DEFAULT_CHANGE_PCT),
+        prev_reason=prev_reason)
+    return {"payrun_id": payrun_id, "run_status": run.get("status"), "compared_to": compared_to, **result}
+
+
 # run_payroll rewrites the slips of whichever run it reuses, and this seat cannot
 # undo that. Only a run still being prepared may be recalculated: draft (never
 # calculated) or review (calculated, not yet handed to an approver).
@@ -162,6 +252,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "list_payruns": run_list_payruns,
     "get_payrun": run_get_payrun,
     "list_payrun_employees": run_list_payrun_employees,
+    "pre_payroll_scan": run_pre_payroll_scan,
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,

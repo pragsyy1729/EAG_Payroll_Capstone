@@ -231,6 +231,25 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "pre_payroll_scan",
+            "Check one calculated PayRun for problems before it is submitted: employees paid "
+            "who have left, are suspended or have an exit date on or before the period end; "
+            "large month-over-month net-pay changes against the previous calculated run; zero, "
+            "negative or missing net pay; and duplicate payees. Read-only. Returns findings "
+            "with severity and evidence, plus counts. If the run has not been calculated it "
+            "says so and finds nothing; it never calculates the run. Use a `payrun_id` taken "
+            "from an earlier outcome (for example `list_payruns`).",
+            {"jurisdiction": _JURISDICTION,
+             "payrun_id": string("The PayRun to check.", maximum=200, format="id"),
+             "compare_to": string("PayRun id to compare against; omit to use the most recent "
+                                  "earlier calculated regular run.",
+                                  required=False, maximum=200, format="id"),
+             "change_threshold_pct": integer("Flag net-pay changes of at least this many percent "
+                                             "as medium severity (50 or more is always high).",
+                                             required=False, default=30, minimum=1, maximum=100)},
+            families=("evidence",),
+        ),
+        Capability(
             "run_payroll",
             "Open (or reuse) the pay run for a month and calculate draft salary slips. "
             "This is the real payroll calculation -- a mutation, not a read. It never "
