@@ -15,6 +15,7 @@ answer can see, never a silent empty response.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
@@ -238,6 +239,18 @@ async def run_submit_payrun_for_approval(ctx: RunContext, task: TaskSpec) -> dic
                             task.input["jurisdiction"])
 
 
+def _answer_request() -> dict[str, str]:
+    """Optional routing for the final answer only. Planning is many small calls where a
+    fast, high-throughput model suits; the answer is one call where the strongest model
+    matters (a 20B model misdiagnosed a pay change that a 120B model got right 5 of 5)."""
+    request: dict[str, str] = {}
+    if provider := os.getenv("PAYROLL_ANSWER_PROVIDER"):
+        request["provider"] = provider
+    if model := os.getenv("PAYROLL_ANSWER_MODEL"):
+        request["model"] = model
+    return request
+
+
 async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     """The terminal capability: read every completed outcome from the graph's
     own journal (never a side channel) and ask the LLM to synthesise a
@@ -259,7 +272,8 @@ async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str,
         "run_exists_not_recalculable), say plainly that the action was NOT performed and why, and "
         "name the existing record -- never describe a refused action as done."
     )
-    reply = await ctx.llm(prompt, system)
+    request = _answer_request()
+    reply = await ctx.llm(prompt, system, **({"request": request} if request else {}))
     return {"text": reply.get("text", ""), "provider": reply.get("provider"), "model": reply.get("model")}
 
 
