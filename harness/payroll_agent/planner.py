@@ -54,6 +54,12 @@ class _Provenance:
         return isinstance(value, str) and (value in self.seen or value in self.goal)
 
 
+# AgentSwitch returns record fields alphabetically, so a record's own `id` can
+# sort past the field cap. Without it the model sees only foreign keys
+# (company_id, email, ...) and uses one of them as the record's id.
+_ALWAYS_KEEP = ("id", "number", "employee_id", "payrun_id")
+
+
 def _clip(value: Any, *, chars: int = 4_000, depth: int = 0) -> Any:
     """Bound planner context while retaining the evidence needed to replan."""
     if depth > 9:
@@ -63,8 +69,10 @@ def _clip(value: Any, *, chars: int = 4_000, depth: int = 0) -> Any:
     if isinstance(value, list):
         return [_clip(item, chars=chars, depth=depth + 1) for item in value[:12]]
     if isinstance(value, dict):
-        return {str(key): _clip(item, chars=chars, depth=depth + 1)
-                for key, item in list(value.items())[:30]}
+        items = list(value.items())
+        # Identifying fields first, so the cap can never cut them.
+        ordered = [kv for kv in items if kv[0] in _ALWAYS_KEEP] + [kv for kv in items if kv[0] not in _ALWAYS_KEEP]
+        return {str(key): _clip(item, chars=chars, depth=depth + 1) for key, item in ordered[:30]}
     return value
 
 
