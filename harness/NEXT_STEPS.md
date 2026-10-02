@@ -1,6 +1,6 @@
 # Next Steps
 
-Status snapshot as of 2026-09-29 (end of day). See `REQUIREMENTS.md` for the
+Status snapshot as of 2026-10-03. See `REQUIREMENTS.md` for the
 full requirements catalog and AgentSwitch integration details, and
 `GAP_REPORT.md` for the week-one deliverable.
 
@@ -10,19 +10,28 @@ full requirements catalog and AgentSwitch integration details, and
   fallback for the four confirmed MCP-absent action groups (Form16/Form24Q
   generation, vault, reports, locale). Holds both jurisdiction tenants
   (`IN`/`US`). Live-verified.
-- `payroll_agent/capabilities.py` -- seven capabilities: `list_employees`,
-  `list_payruns`, `get_payrun`, `list_payrun_employees`, `run_payroll`,
-  `submit_payrun_for_approval`, `answer_with_evidence`. Id arguments carry
-  `format="id"`, which turns on the provenance check (below).
-- `payroll_agent/planner.py` -- `PayrollPlanner`. Now receives today's date,
+- `payroll_agent/capabilities.py` -- eight capabilities: `list_employees`,
+  `list_payruns`, `get_payrun`, `list_payrun_employees`, `pre_payroll_scan`,
+  `run_payroll`, `submit_payrun_for_approval`, `answer_with_evidence`. Id
+  arguments carry `format="id"`, which turns on the provenance check (below).
+- `payroll_agent/planner.py` -- `PayrollPlanner`. Receives today's date,
   resolves a bare month ("August") to its most recent occurrence, and
   validates every id-valued argument against evidence the run has actually
   seen (goal, initial evidence, succeeded outcomes). System prompt states
-  which `*_id` fields are an employee's id and which are not.
+  which `*_id` fields are an employee's id and which are not. `_clip` now
+  keeps a record's identifying fields (`id`, `number`, `employee_id`,
+  `payrun_id`) ahead of the 30-field cap (see "Wrong employee id" below).
 - `payroll_agent/workers.py` -- one async function per capability.
+  `pre_payroll_scan` is read-only; its checks are pure functions in
+  `payroll_agent/scan_checks.py`.
 - `payroll_agent/run.py` -- CLI runner. No `main.py`/FastAPI service yet.
-- `payroll_agent/gateway.py` -- `PAYROLL_GATEWAY_MODEL` env override.
-  `.env` (gitignored) currently sets `gemini-3.5-flash`.
+  `run_goal(..., llm=, agentswitch=)` accepts a replacement model or client.
+- `payroll_agent/gateway.py` -- `PAYROLL_GATEWAY_PROVIDER` /
+  `PAYROLL_GATEWAY_MODEL` / `PAYROLL_GATEWAY_FALLBACK_PROVIDERS` env settings.
+  `workers.py` also reads `PAYROLL_ANSWER_PROVIDER` / `PAYROLL_ANSWER_MODEL`
+  to route the final answer call separately from planning (see "LLM
+  providers"). All are documented in `.env.example`; `.env` is gitignored.
+- `evals/` -- evaluation harness core (see Near-term).
 
 ## Done today
 
@@ -46,56 +55,96 @@ full requirements catalog and AgentSwitch integration details, and
 - **"Run August payroll" (IN)**: resolves 2026-08, finds `PRUN-2026-00012`
   (`pending_approval`), refuses to recalculate, answers that the action was
   NOT performed. No new PayRun created (count stayed 15).
+- **"Why is Ramesh's net pay lower in July?" (IN)**: completes end to end
+  with planning on NVIDIA `gpt-oss-20b` and the answer on Groq
+  `gpt-oss-120b` (47 s, 14 model calls). Finds the real `Employee.id`,
+  fetches the June and July payslips, and correctly attributes the drop to
+  Overtime 2,538 -> 2,192 (-346) with EPF +2, checked against the raw
+  `PayRunEmployee` rows. One end-to-end run on this setup; repeat-run
+  reliability is not measured.
 
 ## NOT verified
 
-- **"Why is Ramesh's net pay lower this month?"** has never completed a live
-  run. Best so far: three lookups, then a Gemini 503. Observed failures:
-  the planner picked `company_id`, `department_id`, `created_by` and another
-  employee's id as Ramesh's id, and once invented one. The real id
-  (`Employee.id`, `f8e8a973-...`) was never tried. The provenance check and
-  the id-precedence prompt are meant to fix this but are untested in a
-  finished run.
-- Whether `PayRunEmployee.employee_id` equals `Employee.id` (assumed, not
-  confirmed).
-- "This month" ambiguity: September's run (`PRUN-2026-00013`) is a `draft`
-  with 51 employees; August (`PRUN-2026-00012`) has 65 slips.
+- Repeat-run reliability of the Ramesh flow. Earlier end-to-end runs on
+  weaker or mixed models completed 1 of 3; the routed setup has one run.
+- **"This month" with no run.** Asked on 2026-10-03, "this month" resolves
+  to October, which has no payrun; September (`PRUN-2026-00013`) is an
+  uncalculated `draft` (51 rows, all net pay <= 0). The explicit "in July"
+  phrasing works. What the agent should say for a month with no run is still
+  undefined.
+- `pre_payroll_scan` with a live LLM (scripted runs on the real tenant pass).
+  Twice a live model tried it for the Ramesh question with a placeholder
+  payrun id; the provenance check rejected it.
+- US tenant (Keystone) for any of the flows.
 
-## Blocker: Gemini quota
+## Wrong employee id: root cause (fixed 2026-10-03)
 
-The shared `glc_v5` gateway (`session_17/glc_v5`, started manually with
-`uv run glc serve`, log at `/private/tmp/claude-501/glc_serve.log`) has only
-**two** Gemini keys (`GEMINI_API_KEY_1/2`) and no other provider keys.
-After ~260 calls it returns 503 "RPM quota burned" even after 7 minutes of
-quiet. Likely a daily limit mislabelled as RPM (`glc/routes/chat.py:362`
-classifies any 429 containing "quota" as RPM); unconfirmed.
+For several runs the planner passed `company_id`, an email, an employee
+number or a payrun id as the employee id. The cause was `_clip` in
+`planner.py`, which kept only the first 30 fields of each record while
+AgentSwitch returns fields alphabetically: an Employee row has 67 fields and
+`id` is number 41, so the model was never shown it, only `company_id`,
+`email`, `employee_id_number` and similar. No model could get it right. The
+provenance check could not catch it because it is built from the unclipped
+results. Fixed by putting identifying fields first. The stricter "id must
+appear as a record's own `id`" rule considered earlier is not needed unless
+the mistake comes back.
 
-Ways out, in order of effort:
-1. Wait for the daily reset (Google free tier: midnight Pacific), rerun.
-2. Add a third key from a *separate* Google project as `GEMINI_API_KEY_3`
-   (pool is built from `GEMINI_API_KEY_1..MAX_GEMINI_KEYS`), restart gateway.
-3. Add a non-Gemini provider key (Groq etc.); `routing.yaml` already lists
-   them as fallbacks.
-4. Offline scripted transport (below).
+Note `_clip` still shows only 30 of 67 fields, so planner prompts lack e.g.
+`gross_pay`, `net_pay` and `lop_days` on payslip rows. The answer step reads
+full rows, so answers are unaffected.
 
-**2026-09-30 update:** the daily limit has reset and the gateway (started
-with `uv run glc serve` from `session_17/glc_v5`) answers. Live eval run of
-`scaffold_august_refusal`: planner calls 1-2 succeeded (real `PayRun.list` +
-`PayRun.get`, found `PRUN-2026-00012` `pending_approval`), call 3 failed twice
-in a row, first with "RPM quota burned (~40s)" at 2s pacing, then with
-"upstream 503" at 15s pacing (`--min-interval 15`). Probes show Gemini
-latency of 8-9s for a 3-token call with retries, so the upstream is
-overloaded or flaky, not out of quota. The harness scored both runs
-`infra_error`, and the watched state was identical before/after.
+## LLM providers
 
-Retry commands (from `harness/`, gateway must be running on :8111):
+Current setup (`harness/.env` and the gateway's `.env`, both gitignored):
+
+| Use | Provider / model |
+|---|---|
+| Planning (many small calls) | NVIDIA `openai/gpt-oss-20b` |
+| Final answer (one call) | Groq `openai/gpt-oss-120b` via `PAYROLL_ANSWER_*` |
+| Fallbacks | `groq`, then `gemini` (`PAYROLL_GATEWAY_FALLBACK_PROVIDERS`) |
+
+The gateway now running is this repo's own `glc_v5/` (the shared
+`session_17/glc_v5` copy was stopped), started with `uv run glc serve`,
+listening on :8111. Provider keys live in `glc_v5/.env`. The fallback client
+does not send a model name, so each fallback provider's model must be set in
+the gateway `.env` (`NVIDIA_MODEL`, `GEMINI_MODEL`); otherwise a rollover hits
+a deprecated or unavailable default.
+
+What we learned:
+- **Gemini**: daily free-tier quota exhausted (HTTP 429 "exceeded your
+  current quota"), not a per-minute limit. It is only a last fallback now.
+- **Groq**: the gateway enforces 6,000 tokens per minute for Groq
+  (`glc/routing/core.py`), so a multi-step run cannot use it for planning
+  without 60 s pacing. It returns `TPM limit` before calling Groq.
+- **NVIDIA**: 100,000 tokens per minute, 40 requests per minute. The gateway's
+  default model `deepseek-v3.2` is not available to our key (404). Available
+  and tried: `nemotron-3-super-120b` (wrong plan field names), `nemotron-ultra`
+  (wrong format, slow), `gpt-oss-20b` (right format, fast). `gpt-oss-120b` was
+  retired on NVIDIA on 2026-09-03 (HTTP 410); it is available on Groq.
+- **Answer quality**: with the agent's exact answer prompt and real evidence,
+  Groq `gpt-oss-120b` correctly named Overtime (-346) in 5 of 5 runs. The 20B
+  model once blamed EPF as the sole cause. So the answer step needs the
+  stronger model, and no new capability is needed for payslip comparison.
+- **Ollama (local, Apple M1 with 8 GB RAM)**: not viable as a main provider.
+  Run one model at a time; loading two at once silently returns blank replies.
+  Alone, `llama3.2` (9 s/call) and `mistral` (27 s/call) write the wrong plan
+  format; `qwen2.5-coder` (27-43 s/call) writes the right format but a full
+  query took 254 s and failed on its fourth reply. Keep it only as a last
+  resort.
+
+Restart the gateway after changing its `.env`:
 ```bash
-.venv/bin/python -m payroll_agent.run "Why is Ramesh's net pay lower this month?" --jurisdiction IN
+kill $(lsof -nP -iTCP:8111 -sTCP:LISTEN -t); cd glc_v5 && uv run glc serve
+```
+Run the flows (from `harness/`, gateway on :8111):
+```bash
+.venv/bin/python -m payroll_agent.run "Why is Ramesh's net pay lower in July?" --jurisdiction IN
 .venv/bin/python -m payroll_agent.run "Run August payroll" --jurisdiction IN --allow run_payroll
 ```
 The second is safe to repeat: the guard refuses while August is
-`pending_approval`. Check `patch_events` in the output for planner failures.
-Save output to a file: only the tail is easy to see in a terminal.
+`pending_approval`. Save output to a file: only the tail is easy to see in a
+terminal.
 
 ## Workflow roadmap (2026-09-30)
 
@@ -104,7 +153,9 @@ employee "why", B run lifecycle, C pre-payroll checks, D reporting, E
 statutory, F lifecycle, G refusals), matched to the tools our seat has, with
 built/partial/todo status. Proposed order:
 
-1. [ ] **A: finish the Ramesh flow** (required query; needs the gateway).
+1. [x] **A: Ramesh flow** completes live and the answer matches the raw
+       rows (see "Verified live"). Open: repeat-run reliability, and what to
+       say when "this month" has no run.
 2. [x] **C: pre-payroll risk scan** built (`pre_payroll_scan`, read-only;
        spec and plan in `docs/superpowers/`). Checked with scripted runs on the
        real India tenant: July 2026 (paid) vs June found 2 high + 1 info
@@ -143,10 +194,13 @@ new work is read wrappers plus Python computation.
 
 ## Near-term
 
-- [ ] Live LLM run of "check the July/September run" once Gemini recovers (scripted runs pass).
-- [ ] Get the Ramesh flow to complete live, then check the answer against
-      the raw `PayRunEmployee` rows (net-pay difference explained by
-      components, not invented).
+- [ ] Live LLM run of "check the July/September run" (scripted runs pass).
+- [ ] Measure repeat-run reliability of the Ramesh flow on the routed setup
+      (several runs, answer checked against the raw `PayRunEmployee` rows).
+- [ ] Reduce planner prompt size or the per-call output reservation so Groq's
+      6,000 tokens-per-minute cap allows planning there too. Unverified
+      assumption: the gateway counts the `max_tokens` reservation against
+      the minute.
 - [x] Evidence-review LLM call in `planner.py` now fails visibly (shared
       `_call_failed` helper); verified by injecting a 503 at that call.
 - [x] Offline/deterministic *scripted* LLM transport: `evals/transport.py`
@@ -188,7 +242,13 @@ new work is read wrappers plus Python computation.
   provider with more quota first.
 - Per-capability field-source mapping for ids: does not scale with ~96
   tools. Basic provenance only. Wrong-kind ids that exist in evidence are
-  not caught by code; the prompt guidance covers them.
+  not caught by code; the prompt guidance covers them. The wrong ids seen so
+  far were caused by `_clip` hiding `id`, now fixed.
+- A `compare_payslips` capability (compute every earning/deduction difference
+  in Python). Considered after one wrong answer from a 20B model, then
+  dropped: the 120B model got the explanation right 5 of 5 times from the
+  existing evidence, so it was fitted to one failure. Revisit only if the
+  strong model starts failing.
 
 ## Not urgent, but tracked
 
