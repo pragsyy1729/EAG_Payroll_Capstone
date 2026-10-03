@@ -5,6 +5,8 @@ designed while it is being built.
 """
 from __future__ import annotations
 
+import pytest
+
 from payroll_agent import cost_report as cr
 
 
@@ -76,7 +78,7 @@ def test_check_header_reports_only_mismatches():
     totals = cr.summarize(NOW, EMPLOYEES, "none")["totals"]
     ok = {"total_gross_pay": 3500, "total_net_pay": 3150, "total_deductions": 0,
           "total_employer_contribution": 350, "employee_count": 3}
-    assert cr.check_header(ok, totals) == {"header_matches_slips": True, "differences": {}}
+    assert cr.check_header(ok, totals) == {"header_matches_slips": True, "compared": 5, "differences": {}}
     off = cr.check_header({**ok, "total_gross_pay": 3510, "employee_count": 4}, totals)
     assert off["header_matches_slips"] is False
     assert off["differences"] == {"total_gross_pay": {"header": 3510.0, "slips": 3500.0},
@@ -172,3 +174,33 @@ def test_compare_reports_the_overtime_change_from_earnings():
     now = [{**slip("a", 1000, 900, 100, 0), "earnings": [{"component_name": "Overtime", "amount": 200}]}]
     was = [{**slip("a", 1000, 900, 100, 0), "earnings": [{"component_name": "Overtime", "amount": 500}]}]
     assert cr.compare(now, was, EMPLOYEES, "none")["overtime"] == {"previous": 500.0, "current": 200.0, "change": -300.0}
+
+
+@pytest.mark.parametrize("earnings", [5, "x", {}, None, [None, 3]])
+def test_a_malformed_earnings_value_never_crashes_and_falls_back_to_the_field(earnings):
+    row = {**slip("a", 1000, 900, 100, 75), "earnings": earnings}
+    assert cr.summarize([row], EMPLOYEES, "none")["totals"]["overtime_pay"] == 75.0
+
+
+def test_an_unusable_overtime_component_is_counted_and_the_field_is_not_used_instead():
+    row = {**slip("a", 1000, 900, 100, 75), "earnings": [{"component_name": "Overtime", "amount": "x"}]}
+    out = cr.summarize([row], EMPLOYEES, "none")
+    assert out["totals"]["overtime_pay"] == 0.0 and out["unusable_amounts"] == 1
+
+
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_non_finite_amounts_are_unusable(bad):
+    out = cr.summarize([slip("a", bad, 900)], EMPLOYEES, "none")
+    assert out["totals"]["gross_pay"] == 0.0 and out["unusable_amounts"] == 1
+
+
+def test_the_comparison_runs_unusable_amounts_are_reported():
+    out = cr.build_report(run=RUN, rows=NOW, employees=EMPLOYEES, group_by="none",
+                          prev_rows=[slip("a", "abc", 700, 80)], compared_to="R0", variance_wanted=True)
+    assert {"what": "variance amounts", "reason": "1 unusable amount(s) in the comparison run counted as 0"} in out["skipped"]
+
+
+def test_check_header_says_when_nothing_could_be_compared():
+    totals = cr.summarize(NOW, EMPLOYEES, "none")["totals"]
+    assert cr.check_header({}, totals) == {"header_matches_slips": None, "compared": 0, "differences": {}}
+    assert cr.check_header({"total_gross_pay": float("nan")}, totals)["header_matches_slips"] is None

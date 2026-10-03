@@ -6,6 +6,7 @@ fetching; this module only computes. Every figure comes from the rows passed in.
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from typing import Any
 
@@ -23,15 +24,33 @@ _HEADER = (("total_gross_pay", "gross_pay"), ("total_net_pay", "net_pay"),
            ("total_employer_contribution", "employer_contribution"), ("employee_count", "headcount"))
 
 
-def _overtime(row: dict[str, Any]) -> float | None:
-    """Overtime paid on a slip. AgentSwitch's `overtime_pay` field can be 0 while the pay is
-    in the `earnings` list as an "Overtime" component (confirmed on the India tenant), so the
-    component wins and the field is only the fallback."""
-    parts = [number(item.get("amount")) for item in (row.get("earnings") or [])
-             if isinstance(item, dict) and "overtime" in str(item.get("component_name", "")).lower()]
-    if parts:
-        return sum(part for part in parts if part is not None)
-    return number(row.get("overtime_pay"))
+def _finite(value: Any) -> float | None:
+    """A usable amount: numeric, and not nan or inf (which would slip past every comparison)."""
+    amount = number(value)
+    return amount if amount is not None and math.isfinite(amount) else None
+
+
+def _overtime(row: dict[str, Any]) -> tuple[float | None, int]:
+    """(overtime paid on a slip, count of present-but-unusable amounts).
+
+    AgentSwitch's `overtime_pay` field can be 0 while the pay is in the `earnings` list as an
+    "Overtime" component (confirmed on the India tenant), so any such component decides the
+    answer, including when its amount is unusable (counted, not replaced by the field). The
+    field is the fallback only when the slip has no overtime component."""
+    earnings = row.get("earnings")
+    found, total, unusable = False, 0.0, 0
+    for item in earnings if isinstance(earnings, list) else []:
+        if isinstance(item, dict) and "overtime" in str(item.get("component_name", "")).lower():
+            found = True
+            amount = _finite(item.get("amount"))
+            if amount is None:
+                unusable += item.get("amount") is not None
+            else:
+                total += amount
+    if found:
+        return total, unusable
+    amount = _finite(row.get("overtime_pay"))
+    return amount, int(amount is None and row.get("overtime_pay") is not None)
 
 
 def _blank() -> dict[str, float]:
@@ -56,10 +75,13 @@ def _aggregate(rows: list[dict[str, Any]], employees: list[dict[str, Any]],
         for bucket in buckets:
             bucket["headcount"] += 1
         for name in _SUMMED:
-            amount = _overtime(row) if name == "overtime_pay" else number(row.get(name))
-            if amount is None:
-                unusable += row.get(name) is not None      # a missing field is simply 0; a bad one is reported
-                amount = 0.0
+            if name == "overtime_pay":
+                amount, bad = _overtime(row)
+                unusable += bad
+            else:
+                amount = _finite(row.get(name))
+                unusable += amount is None and row.get(name) is not None   # missing is simply 0; bad is reported
+            amount = amount or 0.0
             for bucket in buckets:
                 bucket[name] += amount
     return totals, dict(groups), unusable
@@ -88,14 +110,18 @@ def summarize(rows: list[dict[str, Any]], employees: list[dict[str, Any]], group
 def check_header(run: dict[str, Any], totals: dict[str, float]) -> dict[str, Any]:
     """Compare the PayRun header with the slip sums; only mismatches are listed."""
     differences: dict[str, Any] = {}
+    compared = 0
     for header_key, total_key in _HEADER:
-        header = number(run.get(header_key))
+        header = _finite(run.get(header_key))
         if header is None:
             continue
+        compared += 1
         tolerance = 0.5 if total_key == "headcount" else MONEY_TOLERANCE
         if abs(header - totals[total_key]) > tolerance:
             differences[header_key] = {"header": header, "slips": totals[total_key]}
-    return {"header_matches_slips": not differences, "differences": differences}
+    # With nothing to compare, "matches" would be false comfort: say so with None.
+    return {"header_matches_slips": (not differences) if compared else None, "compared": compared,
+            "differences": differences}
 
 
 def _pct(previous: float, current: float) -> float | None:
@@ -119,7 +145,7 @@ def _people_missing_from(rows: list[dict[str, Any]], other_rows: list[dict[str, 
 def compare(rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]], employees: list[dict[str, Any]],
             group_by: str) -> dict[str, Any]:
     now_totals, now_groups, _ = _aggregate(rows, employees, group_by)
-    was_totals, was_groups, _ = _aggregate(prev_rows, employees, group_by)
+    was_totals, was_groups, was_unusable = _aggregate(prev_rows, employees, group_by)
     now_totals, was_totals = _finish(now_totals), _finish(was_totals)
     now_cost = {name: _finish(bucket)["total_cost"] for name, bucket in now_groups.items()}
     was_cost = {name: _finish(bucket)["total_cost"] for name, bucket in was_groups.items()}
@@ -133,7 +159,8 @@ def compare(rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]], employe
     return {"totals": {name: _delta(was_totals[name], now_totals[name]) for name in fields},
             "groups": moves[:MAX_GROUPS], "groups_truncated": len(moves) > MAX_GROUPS,
             "joiners": _people_missing_from(rows, prev_rows), "leavers": _people_missing_from(prev_rows, rows),
-            "overtime": {key: overtime[key] for key in ("previous", "current", "change")}}
+            "overtime": {key: overtime[key] for key in ("previous", "current", "change")},
+            "previous_unusable_amounts": was_unusable}
 
 
 def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: list[dict[str, Any]],
@@ -156,6 +183,9 @@ def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: 
             skipped.append({"what": "variance", "reason": variance_reason})
         else:
             variance = {"compared_to": compared_to, **compare(rows, prev_rows, employees, group_by)}
+            if variance["previous_unusable_amounts"]:
+                skipped.append({"what": "variance amounts", "reason": (
+                    f"{variance['previous_unusable_amounts']} unusable amount(s) in the comparison run counted as 0")})
     return {**head, "calculated": True, "totals": summary["totals"], "groups": summary["groups"],
             "groups_truncated": summary["groups_truncated"], "consistency": check_header(run, summary["totals"]),
             "variance": variance, "skipped": skipped}

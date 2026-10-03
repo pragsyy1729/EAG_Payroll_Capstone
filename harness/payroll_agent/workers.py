@@ -202,6 +202,11 @@ async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any
     return {"payrun_id": payrun_id, "run_status": run.get("status"), "compared_to": compared_to, **result}
 
 
+def _named_for_cost_report(problem: dict[str, Any]) -> dict[str, Any]:
+    """The shared fetch helper words a short fetch as the scan's; name this capability instead."""
+    return {**problem, "tool": "payroll_cost_report"} if problem.get("code") == "scan_incomplete" else problem
+
+
 async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     """Read-only: fetch, then let cost_report compute. Never calls a mutating tool."""
     jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
@@ -213,7 +218,7 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
         return run
     rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
     if problem:
-        return problem
+        return _named_for_cost_report(problem)
     employees: list[dict[str, Any]] = []
     prev_rows: list[dict[str, Any]] | None = None
     compared_to: str | None = None
@@ -224,7 +229,7 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
         if group_by != "none":
             employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
             if problem:
-                return problem
+                return _named_for_cost_report(problem)
         if variance_wanted:
             compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
             if prev_rows is None:

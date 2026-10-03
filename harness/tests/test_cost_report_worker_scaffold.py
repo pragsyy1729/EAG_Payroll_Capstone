@@ -132,6 +132,7 @@ async def test_no_earlier_run_skips_only_the_variance():
 async def test_a_short_fetch_of_the_runs_own_rows_is_scan_incomplete():
     result = await report(standard_fake(short_total=50))
     assert result["error"] is True and result["code"] == "scan_incomplete"
+    assert result["tool"] == "payroll_cost_report"             # not the scan's name
 
 
 async def test_a_denied_employee_list_keeps_its_own_error():

@@ -188,6 +188,15 @@ built/partial/todo status. Proposed order:
        `overtime_hours` fields are 0 for every employee; overtime is an "Overtime"
        component in `earnings` (June 54,512, July 52,049). The report reads that
        component, with the field only as fallback.
+       After an independent review: bad amounts (including nan/inf) are counted
+       and reported for both runs, the header check says `null` when nothing
+       could be compared, a malformed `earnings` value no longer crashes, and a
+       short fetch is named for this capability. Deferred minors: overtime
+       matches any earning whose name contains "overtime" (so "Overtime
+       Recovery" would count; exact matching would undercount names like
+       "Overtime Weekday"); money totals can differ from the sum of rounded
+       parts by a cent; whether `Employee.list` omits leavers on the real tenant
+       (their slips would fall in "(unknown)") was not checked.
 4. [x] **G: refusals** built as a terminal `decline_request` capability
        (spec and plan in `docs/superpowers/`; no model or AgentSwitch call, the
        text is built in code; reason codes `no_such_capability`,

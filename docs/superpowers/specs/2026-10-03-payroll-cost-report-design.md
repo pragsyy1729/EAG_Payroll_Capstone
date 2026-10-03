@@ -91,7 +91,7 @@ calculated returns a plain "not calculated" and nothing else.
                "employer_contribution", "total_cost", "overtime_pay",
                "share_of_cost_pct"} ],            # by total_cost desc, at most 30
   "groups_truncated": false,
-  "consistency": {"header_matches_slips": true,
+  "consistency": {"header_matches_slips": true|false|null, "compared": 5,
                   "differences": {"total_gross_pay": {"header": 1, "slips": 2}}},
   "variance": null | { "compared_to": "<payrun id>",
       "totals": {"gross_pay": {"previous", "current", "change", "change_pct"}, "...": {}},
@@ -113,7 +113,9 @@ calculated returns a plain "not calculated" and nothing else.
 - `change_pct` is `null` when the previous value is zero or missing.
 - `consistency` compares the header's `total_gross_pay`, `total_net_pay`,
   `total_deductions`, `total_employer_contribution` and `employee_count`
-  against the slip sums, within 1.0 for money; only mismatches are listed.
+  against the slip sums, within 1.0 for money; only mismatches are listed. `compared`
+  is how many header fields could be compared; when it is 0 (no header totals, or
+  unusable ones), `header_matches_slips` is `null`, never `true`.
 
 ## Error handling
 
@@ -124,8 +126,10 @@ calculated returns a plain "not calculated" and nothing else.
 - Duplicate `employee_id` within one run: every row is counted in the totals and in
   `headcount` (as the PayRun header counts rows), so the header check still holds;
   joiner and leaver detection uses the set of distinct ids.
-- Amounts may arrive as numbers or numeric strings; unusable values count as 0
-  and are listed under `skipped` with the count.
+- Amounts may arrive as numbers or numeric strings; unusable values (including
+  `nan` and `inf`) count as 0 and are listed under `skipped` with the count, for the
+  report's run and, separately, for the comparison run. An unusable "Overtime" earning
+  is counted and is not replaced by the `overtime_pay` field.
 - The report never writes. Only `.get` and `.list` calls are made.
 
 ## Testing and grading
