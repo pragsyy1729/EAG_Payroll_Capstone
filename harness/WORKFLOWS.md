@@ -57,8 +57,14 @@ Design: `docs/superpowers/specs/2026-09-30-pre-payroll-scan-design.md`.
 - Headcount, joiners and leavers; overtime and allowance cost.
 - Run cost versus budget.
 
-Tools: `PayRun`, `PayRunEmployee`, `Department`, `WorkLocation`,
-`PayrollReportingTag`. Status: todo.
+Status: **partial**. `payroll_cost_report` (read-only) covers total cost for a
+run by department or work location, and month-over-month variance: change in
+totals and per group, joiners and leavers by employee id, and the overtime
+change. It also checks the PayRun header totals against the slip sums. Not
+built: payroll register, year-on-year, allowance-level detail, cost-centre
+tags (`PayrollReportingTag`), budgets, and the US tenant. Department and
+location are each employee's *current* ones, not as of the run's date.
+Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
 
 ## E. Statutory and compliance
 

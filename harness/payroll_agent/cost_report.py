@@ -23,6 +23,17 @@ _HEADER = (("total_gross_pay", "gross_pay"), ("total_net_pay", "net_pay"),
            ("total_employer_contribution", "employer_contribution"), ("employee_count", "headcount"))
 
 
+def _overtime(row: dict[str, Any]) -> float | None:
+    """Overtime paid on a slip. AgentSwitch's `overtime_pay` field can be 0 while the pay is
+    in the `earnings` list as an "Overtime" component (confirmed on the India tenant), so the
+    component wins and the field is only the fallback."""
+    parts = [number(item.get("amount")) for item in (row.get("earnings") or [])
+             if isinstance(item, dict) and "overtime" in str(item.get("component_name", "")).lower()]
+    if parts:
+        return sum(part for part in parts if part is not None)
+    return number(row.get("overtime_pay"))
+
+
 def _blank() -> dict[str, float]:
     return {"headcount": 0, **{name: 0.0 for name in _SUMMED}}
 
@@ -45,7 +56,7 @@ def _aggregate(rows: list[dict[str, Any]], employees: list[dict[str, Any]],
         for bucket in buckets:
             bucket["headcount"] += 1
         for name in _SUMMED:
-            amount = number(row.get(name))
+            amount = _overtime(row) if name == "overtime_pay" else number(row.get(name))
             if amount is None:
                 unusable += row.get(name) is not None      # a missing field is simply 0; a bad one is reported
                 amount = 0.0

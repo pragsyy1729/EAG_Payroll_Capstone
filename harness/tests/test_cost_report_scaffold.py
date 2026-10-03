@@ -148,3 +148,27 @@ def test_build_report_with_variance():
 def test_build_report_reports_unusable_amounts():
     out = cr.build_report(run=RUN, rows=[slip("a", "abc", 900, 100)], employees=EMPLOYEES, group_by="none")
     assert {"what": "amounts", "reason": "1 unusable amount(s) counted as 0"} in out["skipped"]
+
+
+def test_overtime_comes_from_the_overtime_earning_when_the_field_is_empty():
+    row = {**slip("a", 1000, 900, 100, 0),
+           "earnings": [{"component_name": "Basic", "amount": 700}, {"component_name": "Overtime", "amount": 300}]}
+    assert cr.summarize([row], EMPLOYEES, "none")["totals"]["overtime_pay"] == 300.0
+
+
+def test_overtime_falls_back_to_the_field_when_there_is_no_overtime_earning():
+    row = {**slip("a", 1000, 900, 100, 75), "earnings": [{"component_name": "Basic", "amount": 925}]}
+    assert cr.summarize([row], EMPLOYEES, "none")["totals"]["overtime_pay"] == 75.0
+
+
+def test_overtime_earning_names_match_case_insensitively_and_are_summed():
+    row = {**slip("a", 1000, 900, 100, 0),
+           "earnings": [{"component_name": "overtime weekday", "amount": 100},
+                        {"component_name": "Overtime Night", "amount": "50"}]}
+    assert cr.summarize([row], EMPLOYEES, "none")["totals"]["overtime_pay"] == 150.0
+
+
+def test_compare_reports_the_overtime_change_from_earnings():
+    now = [{**slip("a", 1000, 900, 100, 0), "earnings": [{"component_name": "Overtime", "amount": 200}]}]
+    was = [{**slip("a", 1000, 900, 100, 0), "earnings": [{"component_name": "Overtime", "amount": 500}]}]
+    assert cr.compare(now, was, EMPLOYEES, "none")["overtime"] == {"previous": 500.0, "current": 200.0, "change": -300.0}
