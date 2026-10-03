@@ -254,6 +254,27 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "payroll_cost_report",
+            "Report what one calculated PayRun cost: totals (gross pay, net pay, employer "
+            "contribution, total cost = gross + employer contribution, headcount, overtime) and "
+            "a breakdown by department or work location. Set `with_variance` (or pass "
+            "`compare_to`) to also compare against the previous calculated run: change in totals "
+            "and per group, joiners and leavers, and the overtime change. Read-only; if the run "
+            "is not calculated it says so and reports nothing else. Department and location are "
+            "each employee's current ones. Use a `payrun_id` taken from an earlier outcome (for "
+            "example `list_payruns`).",
+            {"jurisdiction": _JURISDICTION,
+             "payrun_id": string("The PayRun to report on.", maximum=200, format="id"),
+             "group_by": string("Break the cost down by this.", required=False, default="department",
+                                choices=("department", "location", "none")),
+             "with_variance": Argument("boolean", "Also compare with the previous calculated run.",
+                                       required=False, default=False),
+             "compare_to": string("PayRun id to compare against; implies variance. Omit to use the "
+                                  "most recent earlier calculated regular run.",
+                                  required=False, maximum=200, format="id")},
+            families=("evidence",),
+        ),
+        Capability(
             "run_payroll",
             "Open (or reuse) the pay run for a month and calculate draft salary slips. "
             "This is the real payroll calculation -- a mutation, not a read. It never "
