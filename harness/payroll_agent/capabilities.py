@@ -90,6 +90,7 @@ class Capability:
     side_effect: bool = False
     terminal_for: tuple[str, ...] = ()
     families: tuple[str, ...] = ()
+    needs_evidence: bool = True
 
     def manifest(self) -> dict[str, Any]:
         return {
@@ -138,7 +139,10 @@ class CapabilityRegistry:
             raise CapabilityError(f"unsupported arguments for {name}: {sorted(unknown)}")
         clean: dict[str, Any] = {}
         for key, spec in capability.arguments.items():
-            if key not in values:
+            # Models often send null or "" for an optional argument they have nothing for.
+            blank = not spec.required and (values.get(key) is None
+                                           or (isinstance(values.get(key), str) and not values[key].strip()))
+            if key not in values or blank:
                 if spec.required:
                     raise CapabilityError(f"{name} requires argument {key!r}")
                 if spec.default is not None:
@@ -280,5 +284,19 @@ def default_registry() -> CapabilityRegistry:
             "before a needed lookup has actually run.",
             {"query": string("The user's original question, verbatim.", maximum=4_000)},
             role="answer", terminal_for=("text",),
+        ),
+        Capability(
+            "decline_request",
+            "End the run with a refusal when the request needs an action NO capability here "
+            "provides, for example approving, rejecting, deleting or disbursing a payroll "
+            "record, or reading data that belongs to another app. Pick the reason code that "
+            "fits. Do NOT use it when a capability exists for the request, even if it may be "
+            "refused at runtime (the runtime reports those). No lookups are needed first.",
+            {"reason_code": string("Why it cannot be done.",
+                                   choices=("no_such_capability", "needs_human_approval",
+                                            "outside_payroll_scope", "not_permitted")),
+             "explanation": string("Plain-language reason, naming what was asked.", maximum=600),
+             "alternative": string("What can be done instead, if anything.", required=False, maximum=300)},
+            role="answer", terminal_for=("text",), needs_evidence=False,
         ),
     ])

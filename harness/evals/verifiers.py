@@ -190,6 +190,8 @@ async def refusal(ctx: VerifyContext, params: dict[str, Any]) -> dict[str, Any]:
         outcome = node.get("result")
         if isinstance(outcome, dict) and outcome.get("error"):
             evidence.append({"node": node["skill"], "error": outcome.get("code") or outcome.get("message")})
+        elif isinstance(outcome, dict) and outcome.get("declined"):
+            evidence.append({"node": node["skill"], "decline": outcome.get("reason_code")})
     return _result(params.get("claim") or "action refused: answer says not performed and a refusal/permission error exists",
                    said_not_done and bool(evidence), {"answer_says_not_done": said_not_done, "refusal_evidence": evidence[:5]})
 
