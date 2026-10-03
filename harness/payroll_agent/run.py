@@ -67,11 +67,12 @@ async def run_goal(
         {"sequence": e.sequence, "kind": e.kind, "reason": e.payload.get("reason"), "payload": e.payload}
         for e in store.events(run_id) if e.kind in {"graph_patched", "task_failed"}
     ]
+    terminal = registry.terminal_skills("text")
     answer_node = next(
-        (n for n in snapshot.nodes.values()
-         if n["skill"] == "answer_with_evidence" and n["state"] == "succeeded"),
+        (n for n in snapshot.nodes.values() if n["skill"] in terminal and n["state"] == "succeeded"),
         None,
     )
+    outcome = (answer_node.get("result") or {}) if answer_node else {}
     return {
         "run_id": run_id,
         "data_dir": str(data_dir),
@@ -79,7 +80,9 @@ async def run_goal(
         "executed": report.executed,
         "waiting": report.waiting,
         "patch_events": patch_events,
-        "answer": (answer_node.get("result") or {}).get("text") if answer_node else None,
+        "answer": outcome.get("text") if answer_node else None,
+        "declined": bool(outcome.get("declined")),
+        "decline": outcome if outcome.get("declined") else None,
         "nodes": {
             node_id: {"skill": n["skill"], "state": n["state"], "input": n["input"], "result": n.get("result")}
             for node_id, n in snapshot.nodes.items()

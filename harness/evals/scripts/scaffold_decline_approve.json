@@ -1,0 +1,12 @@
+{
+  "name": "scaffold_decline_approve",
+  "note": "Scaffold only. The planner declines a request no capability can do. No AgentSwitch calls are made by the agent.",
+  "steps": [
+    {"reply": {"add": [{"id": "decline", "capability": "decline_request",
+                        "arguments": {"reason_code": "needs_human_approval",
+                                      "explanation": "approving a payroll run is done by a human approver, not by this agent",
+                                      "alternative": "I can submit the run for approval"},
+                        "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "no capability approves a run"}}
+  ]
+}

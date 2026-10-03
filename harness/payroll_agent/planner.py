@@ -167,7 +167,8 @@ class PayrollPlanner:
             try:
                 patch = self._parse(raw, graph)
                 if self.review_terminal and any(
-                    task.skill in self.registry.terminal_skills(self.respond_as) for task in patch.add
+                    task.skill in self.registry.terminal_skills(self.respond_as)
+                    and self.registry.get(task.skill).needs_evidence for task in patch.add
                 ):
                     try:
                         review_reply = await self.llm(self._review_prompt(graph), self._review_system())
@@ -211,6 +212,19 @@ class PayrollPlanner:
         active = any(node["state"] in {"pending", "running", "waiting"}
                      for node in graph.nodes.values())
         return GraphPatch(finish=not active, reason=f"planner call failed visibly: {error}")
+
+    def _reject_if_state_changed(self, graph: GraphSnapshot) -> None:
+        """A refusal that needs no evidence must not follow a side effect that really
+        happened: the user would read "I can't do that" although data changed. A side effect
+        the runtime refused returns an error result and changed nothing, so it is allowed."""
+        for node_id, node in graph.nodes.items():
+            if node["state"] != "succeeded" or node["skill"] not in self.registry:
+                continue
+            result = node.get("result")
+            if self.registry.get(node["skill"]).side_effect and not (isinstance(result, dict) and result.get("error")):
+                raise PlannerOutputError(
+                    f"decline_request is not valid after {node_id} changed data; "
+                    "report what happened with answer_with_evidence")
 
     def _stuck_verification(self, graph: GraphSnapshot) -> tuple[str, int] | None:
         if self.max_repeat_failures <= 0:
@@ -305,6 +319,7 @@ class PayrollPlanner:
                 )
 
         tasks: list[TaskSpec] = []
+        terminals_in_patch: list[str] = []
         edges: list[tuple[str, str]] = []
         seen = set(graph.nodes)
         held_for_future: list[str] = []
@@ -351,6 +366,11 @@ class PayrollPlanner:
                 continue
             is_terminal = skill in self.registry.terminal_skills(self.respond_as)
             if is_terminal:
+                if terminals_in_patch:
+                    raise PlannerOutputError("a patch may add only one terminal capability")
+                terminals_in_patch.append(node_id)
+                if not self.registry.get(skill).needs_evidence:
+                    self._reject_if_state_changed(graph)
                 active_terminal = [existing_id for existing_id, value in graph.nodes.items()
                                    if value["skill"] in self.registry.terminal_skills(self.respond_as)
                                    and value["state"] in {"pending", "running", "waiting"}]
@@ -379,6 +399,9 @@ class PayrollPlanner:
             }))
             seen.add(node_id)
 
+        if any(not self.registry.get(t.skill).needs_evidence for t in tasks) and any(
+                self.registry.get(t.skill).side_effect for t in tasks):
+            raise PlannerOutputError("decline_request cannot share a patch with a side-effect capability")
         terminal_succeeded = any(node["skill"] in self.registry.terminal_skills(self.respond_as)
                                  and node["state"] == "succeeded" for node in graph.nodes.values())
         if finish and tasks:
@@ -486,6 +509,9 @@ class PayrollPlanner:
             "equivalent work. Add the response-mode terminal capability only when its evidence is ready. "
             "A jurisdiction (IN or US) is required on every AgentSwitch-backed capability: if the goal "
             "does not say which, ask via the terminal answer rather than guessing one. "
+            "If the request needs an action none of the capabilities provide (approving, rejecting, "
+            "deleting or disbursing a payroll record, or reading another app's data), use "
+            "decline_request with the matching reason code instead of gathering evidence for it. "
             "An employee's id is the `id` of an Employee record, or the `employee_id` on rows of other "
             "entities such as payslips. Never use `company_id`, `department_id`, `party_id`, `created_by` "
             "or any other `*_id` that names a different kind of record, and never another employee's id. "

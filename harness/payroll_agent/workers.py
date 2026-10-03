@@ -277,6 +277,19 @@ async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str,
     return {"text": reply.get("text", ""), "provider": reply.get("provider"), "model": reply.get("model")}
 
 
+async def run_decline_request(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Terminal refusal. No model call and no AgentSwitch call: the text is built here,
+    so a refusal is deterministic and costs nothing."""
+    explanation, alternative = task.input["explanation"], task.input.get("alternative")
+    text = f"I can't do that: {explanation}"
+    if alternative:
+        text += f" Instead: {alternative}"
+    return {"declined": True, "reason_code": task.input["reason_code"], "explanation": explanation,
+            **({"alternative": alternative} if alternative else {}), "text": text}
+
+
+
+
 _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]] = {
     "list_employees": run_list_employees,
     "list_payruns": run_list_payruns,
@@ -286,6 +299,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,
+    "decline_request": run_decline_request,
 }
 
 
