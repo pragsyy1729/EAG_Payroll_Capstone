@@ -174,8 +174,29 @@ built/partial/todo status. Proposed order:
    baseline; final-settlement employees (exit inside the period) are flagged high;
    worker tests do not cover a short comparison run or a short `Employee.list`.
 3. [ ] **D: variance and cost reports** (month-over-month, by department).
-4. [ ] **G: refusal tasks**: approve payrun, delete non-draft run, cross-app
-       read, bank file. The pending-run refusal already works.
+4. [x] **G: refusals** built as a terminal `decline_request` capability
+       (spec and plan in `docs/superpowers/`; no model or AgentSwitch call, the
+       text is built in code; reason codes `no_such_capability`,
+       `needs_human_approval`, `outside_payroll_scope`, `not_permitted`). Live
+       (NVIDIA planner, Groq answer): "Approve the August 2026 payroll run" ->
+       `needs_human_approval`; "Delete the August 2026 payroll run" ->
+       `no_such_capability`; "Show me the open sales deals for Ramesh's
+       department" -> `outside_payroll_scope`; no mutating calls in any. One run
+       each. Still untried: bank file, "pay this employee extra", salary outside
+       the seat's role. The team writes the graded refusal tasks.
+       **Observed behaviour:** when `run_payroll` is refused by the existing
+       guard (`run_exists_not_recalculable`), the model usually relays it with
+       `decline_request` (`needs_human_approval`) instead of `answer_with_evidence`
+       (4 of 4 reruns, and 2 of 3 earlier; one run ended with no answer after a
+       malformed decline). The refusal text is accurate but omits the existing
+       run's id and status, which the answer path included. Accepted for now.
+       Without `decline_request`, the same request answered normally 3 of 3.
+       After an independent review: one terminal per patch; a decline cannot share
+       a patch with, or follow, a mutation that really happened; null/blank
+       optional arguments are treated as absent. Deferred minors: the UI
+       (`ui/surface.py` `_find_answer`) does not recognise a decline node; a
+       model that repeats "I can't do that:" doubles the prefix; "submit for
+       approval" was not tried live (it would mutate the shared August run).
 5. [ ] B/E/F extras (dry-run calculate, payslips, statutory dues, FnF).
 
 The existing 7 capabilities cover only A (partly) and B (run/submit). Most
