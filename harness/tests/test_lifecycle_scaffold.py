@@ -168,3 +168,20 @@ def test_employee_names_prefer_the_full_name():
     names = lc.employee_names([{"id": "a", "first_name": "Asha", "last_name": "Patil"},
                                {"id": "b", "_party_id_display": "Bhaskar B"}, {"id": "c", "_display": "c@x.in"}, {}])
     assert names == {"a": "Asha Patil", "b": "Bhaskar B", "c": "c@x.in"}
+
+
+def test_a_pending_revision_whose_approval_status_says_approved_or_rejected_is_flagged():
+    revisions = [
+        {"number": "REV-A", "employee_id": "a", "status": "pending_approval", "approval_status": "rejected",
+         "effective_date": "2026-09-01"},
+        {"number": "REV-B", "employee_id": "b", "status": "pending_approval", "approval_status": "approved",
+         "effective_date": "2026-09-02"},
+        {"number": "REV-C", "employee_id": "a", "status": "pending_approval", "approval_status": "pending_approval",
+         "effective_date": "2026-09-03"},
+        {"number": "REV-D", "employee_id": "a", "status": "approved", "approval_status": "rejected",
+         "effective_date": "2026-09-04"},
+    ]
+    conflicts = lc.revisions_report(revisions, NAMES, TODAY)["status_conflicts"]
+    assert conflicts["count"] == 2                                     # REV-A and REV-B; REV-D is not pending
+    assert {e["number"] for e in conflicts["examples"]} == {"REV-A", "REV-B"}
+    assert "pending approval" in conflicts["note"]

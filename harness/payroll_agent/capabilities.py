@@ -292,10 +292,11 @@ def default_registry() -> CapabilityRegistry:
             "lifecycle_report",
             "Summarise one lifecycle topic, read-only. `loans`: status, repayment schedule by month and "
             "data-quality flags (non-positive amounts, negative rates, implausible dates). `revisions`: "
-            "salary revisions by status, the pending ones, and backdated pending revisions that imply "
-            "arrears. `settlements`: final settlements with their components. `investments`: declarations "
-            "by status and section, declarations without proof, and proofs by approval status. Pass "
-            "`employee_id` (taken from an earlier outcome) to limit it to one employee.",
+            "salary revisions by status, the pending ones, backdated pending revisions that imply "
+            "arrears, and revisions whose status and approval status contradict each other. `settlements`: final settlements with their components. `investments`: declarations "
+            "by status and section, declarations without proof, and proofs by approval status. Omit "
+            "`employee_id` for the whole company (the usual case, one call covers everyone); pass it "
+            "(taken from an earlier outcome) only to limit the report to one named employee.",
             {"jurisdiction": _JURISDICTION,
              "topic": string("Which topic to report.",
                              choices=("loans", "revisions", "settlements", "investments")),

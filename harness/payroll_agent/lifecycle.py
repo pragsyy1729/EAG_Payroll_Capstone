@@ -147,6 +147,7 @@ def revisions_report(revisions: list[dict[str, Any]], names: dict[Any, Any], tod
     pending = sorted((r for r in revisions if r.get("status") == "pending_approval"),
                      key=lambda r: (str(r.get("effective_date")), str(r.get("number"))))
     backdated = [r for r in pending if (d := _date(r.get("effective_date"))) is not None and d < today]
+    conflicting = [r for r in pending if r.get("approval_status") in ("approved", "rejected")]
     soon = [r for r in revisions if r.get("status") in ("pending_approval", "approved")
             and (d := _date(r.get("effective_date"))) is not None and today <= d <= today + timedelta(days=30)]
     return {"topic": "revisions", "total": len(revisions), "by_status": _count(revisions),
@@ -154,6 +155,9 @@ def revisions_report(revisions: list[dict[str, Any]], names: dict[Any, Any], tod
             "backdated_pending": {"count": len(backdated),
                                   "note": "effective date already passed: arrears likely once approved",
                                   "examples": [row(r) for r in backdated[:MAX_EXAMPLES]]},
+            "status_conflicts": {"count": len(conflicting),
+                                 "note": "status says pending approval but approval_status says approved or rejected",
+                                 "examples": [row(r) for r in conflicting[:MAX_EXAMPLES]]},
             "upcoming_30_days": len(soon),
             "applied_count": sum(1 for r in revisions if r.get("status") == "applied"),
             "unusable_amounts": bad[0]}
