@@ -76,16 +76,29 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
 - Tools: `EPFConfig`, `ESIConfig`, `PTConfig`, `LWFConfig`, `TaxConfig`,
   `USPayrollConfig`, `Form16Record` and `Form24QRecord` (get/list only).
 - Gap: generating Form 16 or Form 24Q is REST-only for this seat.
-- Status: todo.
+- Status: **partial**. `statutory_dues` (read-only) covers India EPF, EPS, EDLI,
+  EPF admin charges, ESI, professional tax, TDS and LWF, each cross-checked against
+  the run header, with the standard India due date for TDS (7th), EPF and ESI (15th
+  of the following month) labelled as not from AgentSwitch, the config rates, and an
+  ESI-ceiling flag. For the US it reports the employee withholdings (federal and
+  state income tax, Social Security, Medicare) from slip deduction components;
+  employer-side US taxes, FUTA and SUTA are reported as unavailable because the
+  data does not hold them. Not built: PT and LWF due dates, US due dates, TDS slab
+  maths, the ESI/PT recomputation, Form 16 and Form 24Q generation (REST-only), and
+  deposit tracking (AgentSwitch has none, so `past_due_date` only means the date passed).
+  Design: `docs/superpowers/specs/2026-10-04-statutory-and-lifecycle-reads-design.md`.
 
 ## F. Lifecycle and exceptions
 
 | Query | Tools | Status |
 |---|---|---|
-| Calculate a full and final settlement; submit it | `FinalSettlement.calculate_settlement`, `.submit` | todo |
-| Review or apply a salary revision, including arrears | `SalaryRevision` | todo |
-| Loan recovery schedule; submit a loan for approval | `EmployeeLoan`, `LoanRepayment` | todo |
-| Is this investment proof complete? Why rejected? | `InvestmentDeclaration`, `ProofOfInvestment` | todo |
+| See final settlements and their components | `FinalSettlement` | built (`lifecycle_report`, topic `settlements`) |
+| Calculate a full and final settlement; submit it | `FinalSettlement.calculate_settlement`, `.submit` | todo (sub-project 6c, changes data) |
+| Review pending salary revisions, backdated ones (arrears), status conflicts | `SalaryRevision` | built (`lifecycle_report`, topic `revisions`) |
+| Apply or submit a salary revision | `SalaryRevision.apply`, `.submit` | todo (sub-project 6c, changes data) |
+| Loan status, repayment schedule by month, data-quality flags | `EmployeeLoan`, `LoanRepayment` | built (`lifecycle_report`, topic `loans`) |
+| Submit a loan for approval | `EmployeeLoan.submit` | todo (sub-project 6c, changes data) |
+| Declarations by status and section, declarations without proof, proofs by status | `InvestmentDeclaration`, `ProofOfInvestment` | built (`lifecycle_report`, topic `investments`); "why rejected" is not in the data |
 
 ## G. Refusals and governance (graded: at least one refusal task)
 

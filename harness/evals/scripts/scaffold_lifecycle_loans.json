@@ -1,0 +1,15 @@
+{
+  "name": "scaffold_lifecycle_loans",
+  "note": "Scaffold only. Summarise the loans and flag data problems. Read-only.",
+  "steps": [
+    {"reply": {"add": [{"id": "loans", "capability": "lifecycle_report",
+                        "arguments": {"jurisdiction": "IN", "topic": "loans"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "summarise the loans"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "Summarise the employee loans and flag any data problems."},
+                        "depends_on": ["loans"]}],
+               "cancel": [], "finish": false, "reason": "report finished; answer from it"}},
+    {"reply": {"ready": true, "missing": [], "reason": "the loans report is present"}},
+    {"reply": "Scripted answer: see the lifecycle_report evidence."}
+  ]
+}
