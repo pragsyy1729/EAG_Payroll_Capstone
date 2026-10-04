@@ -237,7 +237,19 @@ built/partial/todo status. Proposed order:
        again with no mutating call. **Not verified: the allowed paths have never been run
        against real data** (no undo on this seat); do that only for a named record with the
        user's approval. `calculate_settlement` accepts a draft only. **Open follow-up:**
-       `lifecycle_report` rows should carry `id` and `number` so the planner can name a
+       **After an independent review (no critical issues; no path reached an action tool
+       past a refusal):** a failed re-read or transport error after the call is now
+       `outcome_unverified` (may have changed), never "nothing was changed", and the planner
+       blocks a decline after it; payslip replies are verified; payslip rows are filtered to
+       the run; a per-record lock stops two concurrent actions both passing their guards (the
+       race test failed before the lock); the armed eval tasks re-read their targets first and
+       will not run if another team changed one (a deliberately wrong precondition stopped a
+       task with 0 agent calls). Deferred minors: a record without an `id` raises a raw
+       KeyError before any call; a `None` reference is not rejected up front;
+       `_named_for` duplicates `_named_for_cost_report` (and `_with_tool` on the 6a/6b
+       branch), so unify when merging; `send_payslips`/`generate_payslips` descriptions read
+       like read questions; the guard imports the private `cost_report._finite`.
+       **Open follow-up:** `lifecycle_report` rows should carry `id` and `number` so the planner can name a
        record it found; that code is on the unmerged 6a/6b branch, so it follows the merge.
        6a and 6b (statutory dues, lifecycle reports) are on branch
        `statutory-and-lifecycle-reads`.

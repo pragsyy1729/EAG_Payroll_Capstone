@@ -139,6 +139,26 @@ with the real models runs the same refusal requests.
 Natural openings: each refusal code, `no_mutation` after a refusal, the tool never
 called, and `answer_grounded`.
 
+## Rules added after the independent review
+
+- **After the tool is called, never say "nothing was changed".** If the call raises, or the
+  re-read fails, the result is `outcome_unverified` with `may_have_changed: true`; a status
+  that moved to something other than the target is `unexpected_status` (also may have
+  changed). `status_unchanged` (the tool returned but the status did not move) is the only
+  post-call result with `may_have_changed: false`. The capability description and the answer
+  step both say to report a possible change plainly, tell the user to check the record, and
+  never retry. The planner treats a `may_have_changed` result as a real change, so
+  `decline_request` cannot follow it.
+- **Payslip actions are verified too:** a plain-text or non-record reply, `success`/`ok`
+  false, or a run status that moved is `outcome_unverified` / `unexpected_status`, never
+  `performed`. The calculated-rows check keeps only rows whose `payrun_id` is the run's.
+- **One lock per record** serialises guarded actions on the same `(jurisdiction, entity, id)`,
+  so two plan nodes (say submit and cancel) cannot both pass their re-read. The window
+  between the platform's own check and the call is the platform's to close.
+- **Eval tasks may declare `preconditions`** (an `agentswitch_state` check each); the runner
+  re-reads those records first and does not run the task if any is not as the script
+  assumes. The two armed scaffold tasks use it, because other teams can change shared rows.
+
 ## Limitations and open items
 
 - The allowed paths (a real calculate, submit, apply, cancel) are not executed

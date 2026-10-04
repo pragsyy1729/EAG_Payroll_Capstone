@@ -6,6 +6,8 @@ real data. The action tool is never called by any test that expects a refusal.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from evals.transport import ScriptedLLM
@@ -19,18 +21,30 @@ LEGAL = {("EmployeeLoan", "draft"): [{"action": "Submit", "from": "draft", "to":
                                      {"action": "Cancel", "from": "draft", "to": "cancelled"}],
          ("SalaryRevision", "approved"): [{"action": "Apply", "from": "approved", "to": "applied"}],
          ("PayRun", "draft"): [{"action": "Calculate Payroll", "from": "draft", "to": "review"},
-                               {"action": "Cancel", "from": "draft", "to": "cancelled"}]}
+                               {"action": "Cancel", "from": "draft", "to": "cancelled"}],
+         ("SalaryRevision", "draft"): [{"action": "Submit", "from": "draft", "to": "pending_approval"}],
+         ("FinalSettlement", "draft"): [{"action": "Calculate", "from": "draft", "to": "calculated"}],
+         ("FinalSettlement", "calculated"): [{"action": "Submit", "from": "calculated", "to": "pending_approval"}],
+         ("InvestmentDeclaration", "draft"): [{"action": "Submit", "from": "draft", "to": "submitted"}]}
 EFFECTS = {"EmployeeLoan.submit": ("EmployeeLoan", "pending_approval"),
            "EmployeeLoan.cancel.draft.cancelled": ("EmployeeLoan", "cancelled"),
            "SalaryRevision.apply": ("SalaryRevision", "applied"),
            "PayRun.calculate_payroll": ("PayRun", "review"),
-           "PayRun.cancel.draft.cancelled": ("PayRun", "cancelled")}
+           "PayRun.cancel.draft.cancelled": ("PayRun", "cancelled"),
+           "SalaryRevision.submit": ("SalaryRevision", "pending_approval"),
+           "FinalSettlement.calculate_settlement": ("FinalSettlement", "calculated"),
+           "FinalSettlement.submit": ("FinalSettlement", "pending_approval"),
+           "InvestmentDeclaration.submit": ("InvestmentDeclaration", "submitted")}
 
 
 class FakeAgentSwitch:
-    def __init__(self, records, *, stuck=(), failing=(), stale=None, short_total=None):
+    def __init__(self, records, *, stuck=(), failing=(), stale=None, short_total=None, fail_get_after=(),
+                 moves=None, explode=(), ignore_filter=False, payslip_reply=None):
         self.records = {entity: [dict(r) for r in rows] for entity, rows in records.items()}
         self.stuck, self.failing, self.stale, self.short_total = set(stuck), set(failing), stale or {}, short_total
+        self.fail_get_after, self.moves, self.explode = set(fail_get_after), moves or {}, set(explode)
+        self.ignore_filter, self.payslip_reply = ignore_filter, payslip_reply
+        self.changed: set[str] = set()
         self.calls: list[tuple[str, dict]] = []
 
     @property
@@ -44,27 +58,36 @@ class FakeAgentSwitch:
         return next(r for r in self.records[entity] if r["id"] == rid)
 
     async def call_tool(self, name, arguments=None, *, jurisdiction):
+        await asyncio.sleep(0)          # a real client yields here, which lets concurrent actions interleave
         arguments = arguments or {}
         self.calls.append((name, arguments))
         entity, _, action = name.partition(".")
+        if name in self.explode:
+            raise RuntimeError("connection reset")
         if name in self.failing:
             raise AgentSwitchToolError(name, -32002, "platform refused")
         if action == "list":
             rows = self.records.get(entity, [])
-            rows = [r for r in rows if all(r.get(k) == v for k, v in arguments.items() if k == "payrun_id")]
+            if not self.ignore_filter:
+                rows = [r for r in rows if all(r.get(k) == v for k, v in arguments.items() if k == "payrun_id")]
             offset, limit = arguments.get("offset", 0), min(arguments.get("limit", 10), 100)
             total = len(rows) if self.short_total is None else self.short_total
             return {"data": rows[offset:offset + limit], "limit": limit, "offset": offset, "total": total}
         if action == "get":
+            if entity in self.changed and entity in self.fail_get_after:
+                raise AgentSwitchToolError(name, -32003, "temporarily unavailable")
             row = {**self._row(entity, arguments["id"]), **self.stale.get((entity, arguments["id"]), {})}
             return {**row, "_transitions": LEGAL.get((entity, row["status"]), [])}
         if name in EFFECTS:
             target_entity, new_status = EFFECTS[name]
+            new_status = self.moves.get(name, new_status)
             if name not in self.stuck:
                 self._row(target_entity, arguments["id"])["status"] = new_status
+            self.changed.add(target_entity)
             return {"id": arguments["id"], "ok": True}
         if entity == "PayRun" and action in ("generate_payslips", "send_payslips"):
-            return {"id": arguments["id"], "generated": True, "slips": [1, 2]}
+            return self.payslip_reply if self.payslip_reply is not None else {
+                "id": arguments["id"], "generated": True, "slips": [1, 2]}
         raise AssertionError(f"unexpected tool {name}")
 
 
@@ -134,7 +157,7 @@ async def test_a_tool_error_is_returned_unchanged():
 async def test_a_tool_that_returns_without_changing_the_status_is_reported():
     fake = FakeAgentSwitch({"EmployeeLoan": [loan()]}, stuck=("EmployeeLoan.submit",))
     result = await act(fake, "submit_loan")
-    assert result["error"] is True and result["code"] == "status_unchanged"
+    assert result["error"] is True and result["code"] == "status_unchanged" and result["may_have_changed"] is False
     assert result["record"]["status"] == "draft" and fake.acted == ["EmployeeLoan.submit"]
 
 
@@ -217,3 +240,72 @@ async def test_an_authorised_action_runs_through_the_planner_once():
     _, result = await run_with(steps, fake, allow={"submit_loan"})
     assert fake.acted == ["EmployeeLoan.submit"] and result["answer"] == "The loan was submitted."
     assert result["nodes"]["act"]["result"]["performed"] is True
+
+
+async def test_a_failing_reread_after_a_successful_call_says_the_change_may_have_happened():
+    fake = FakeAgentSwitch({"EmployeeLoan": [loan()]}, fail_get_after=("EmployeeLoan",))
+    result = await act(fake, "submit_loan")
+    assert result["error"] is True and result["code"] == "outcome_unverified" and result["may_have_changed"] is True
+    assert "may have happened" in result["message"] and fake.acted == ["EmployeeLoan.submit"]
+
+
+async def test_a_transport_error_after_the_call_is_unverified_not_an_exception():
+    fake = FakeAgentSwitch({"EmployeeLoan": [loan()]}, explode=("EmployeeLoan.submit",))
+    result = await act(fake, "submit_loan")
+    assert result["code"] == "outcome_unverified" and result["may_have_changed"] is True
+    assert fake.acted == ["EmployeeLoan.submit"]
+
+
+async def test_a_status_that_moved_to_a_state_other_than_the_target_is_reported():
+    fake = FakeAgentSwitch({"EmployeeLoan": [loan()]}, moves={"EmployeeLoan.submit": "cancelled"})
+    result = await act(fake, "submit_loan")
+    assert result["code"] == "unexpected_status" and result["may_have_changed"] is True
+    assert result["before"] == "draft" and result["after"] == "cancelled"
+
+
+async def test_two_actions_on_the_same_record_cannot_both_get_through():
+    fake = FakeAgentSwitch({"EmployeeLoan": [loan()]})
+    first, second = await asyncio.gather(act(fake, "submit_loan"), act(fake, "cancel_draft_loan"))
+    assert len(fake.acted) == 1
+    assert sorted([bool(first.get("performed")), bool(second.get("performed"))]) == [False, True]
+
+
+async def test_payslip_rows_of_other_runs_never_count_as_calculated():
+    run = {"id": "P1", "number": "PRUN-1", "status": "review"}
+    rows = [{"id": "x", "payrun_id": "OTHER", "net_pay": 900.0}, {"id": "s1", "payrun_id": "P1", "net_pay": 0}]
+    fake = FakeAgentSwitch({"PayRun": [run], "PayRunEmployee": rows}, ignore_filter=True)
+    result = await act(fake, "generate_payslips", "PRUN-1")
+    assert result["code"] == "run_not_calculated" and fake.acted == []
+
+
+async def test_a_plain_text_payslip_reply_is_not_reported_as_performed():
+    run = {"id": "P1", "number": "PRUN-1", "status": "review"}
+    fake = FakeAgentSwitch({"PayRun": [run], "PayRunEmployee": [{"id": "s", "payrun_id": "P1", "net_pay": 9.0}]},
+                           payslip_reply={"text": "queued"})
+    result = await act(fake, "generate_payslips", "PRUN-1")
+    assert result["code"] == "outcome_unverified" and result["may_have_changed"] is True
+
+
+@pytest.mark.parametrize("name, entity, fields, after", [
+    ("cancel_draft_loan", "EmployeeLoan", {}, "cancelled"),
+    ("submit_salary_revision", "SalaryRevision", {"revised_ctc": 100.0}, "pending_approval"),
+    ("calculate_settlement", "FinalSettlement", {}, "calculated"),
+    ("submit_final_settlement", "FinalSettlement", {"status": "calculated", "net_settlement": 100.0}, "pending_approval"),
+    ("submit_investment_declaration", "InvestmentDeclaration", {}, "submitted"),
+])
+async def test_the_other_actions_run_end_to_end_with_the_right_tool(name, entity, fields, after):
+    fake = FakeAgentSwitch({entity: [{"id": "X1", "number": "REC-1", "status": "draft", **fields}]})
+    result = await act(fake, name, "REC-1")
+    assert result["performed"] is True and result["after"] == after
+    assert fake.acted == [guarded.ACTIONS[name].tool]
+
+
+async def test_a_decline_after_an_unverified_action_is_rejected():
+    fake = FakeAgentSwitch({"EmployeeLoan": [loan()]}, explode=("EmployeeLoan.submit",))
+    late = {**DECLINE, "add": [{**DECLINE["add"][0], "depends_on": ["act"]}]}
+    steps = [{"reply": plan("submit_loan")}, {"reply": late}, {"reply": ANSWER},
+             {"reply": {"ready": True, "missing": [], "reason": "ok"}},
+             {"reply": "The loan may have been submitted; please check it."}]
+    _, result = await run_with(steps, fake, allow={"submit_loan"})
+    assert "decline" not in result["nodes"]
+    assert result["answer"] == "The loan may have been submitted; please check it."

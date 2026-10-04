@@ -94,3 +94,44 @@ def test_outcome_for_a_payslip_action_carries_a_digest_of_the_tool_result():
 
 def test_digest_handles_a_payload_that_is_not_a_dict():
     assert g.digest("ok") == {"value": "ok"}
+
+
+@pytest.mark.parametrize("status", [None, 5, "Draft", ["draft"]])
+def test_a_status_that_is_not_exactly_an_accepted_string_is_refused(status):
+    assert g.refusal_for(g.ACTIONS["submit_loan"], {**LOAN, "status": status})["code"] == "not_in_required_state"
+
+
+@pytest.mark.parametrize("moves", [{"a": 1}, [None, {"from": None, "to": None}], "draft", 5])
+def test_malformed_transition_lists_are_refused(moves):
+    assert g.refusal_for(g.ACTIONS["submit_loan"], {**LOAN, "_transitions": moves})["code"] == "transition_not_available"
+
+
+def test_a_status_that_moved_somewhere_else_is_unexpected_and_may_have_changed():
+    out = g.outcome(g.ACTIONS["submit_loan"], LOAN, {**LOAN, "status": "cancelled"}, {"id": "L1"})
+    assert out["code"] == "unexpected_status" and out["may_have_changed"] is True
+    assert out["before"] == "draft" and out["after"] == "cancelled"
+
+
+def test_status_unchanged_says_the_change_probably_did_not_happen():
+    assert g.outcome(g.ACTIONS["submit_loan"], LOAN, LOAN, {"id": "L1"})["may_have_changed"] is False
+
+
+@pytest.mark.parametrize("reply", [{"text": "queued"}, {"result": "ok"}, "ok", {"success": False}, {"ok": 0}])
+def test_an_unverifiable_payslip_reply_is_not_reported_as_performed(reply):
+    run = {"id": "P1", "number": "PRUN-1", "status": "review"}
+    out = g.outcome(g.ACTIONS["generate_payslips"], run, run, reply)
+    assert out["code"] == "outcome_unverified" and out["may_have_changed"] is True and "performed" not in out
+
+
+def test_a_payslip_action_that_changes_the_run_status_is_unexpected():
+    run = {"id": "P1", "number": "PRUN-1", "status": "review"}
+    out = g.outcome(g.ACTIONS["generate_payslips"], run, {**run, "status": "paid"}, {"generated": True})
+    assert out["code"] == "unexpected_status" and out["may_have_changed"] is True
+
+
+def test_unverified_tells_the_user_to_check_and_not_to_retry():
+    out = g.unverified(g.ACTIONS["submit_loan"], LOAN, "the re-read failed")
+    assert out["error"] is True and out["may_have_changed"] is True and out["code"] == "outcome_unverified"
+    assert "may have happened" in out["message"] and "do not retry" in out["message"]
+    assert "NOT performed" in g.ACTIONS["submit_loan"].capability_description()
+    assert "may have happened" in g.ACTIONS["submit_loan"].capability_description()

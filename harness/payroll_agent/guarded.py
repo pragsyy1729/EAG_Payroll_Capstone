@@ -15,9 +15,11 @@ from .cost_report import _finite as finite
 Guard = Callable[[dict[str, Any]], "str | None"]
 
 _SUFFIX = (" This changes shared data (it is not a read) and runs only when authorised. It refuses unless the "
-           "record is in the required state and returns what changed; if it returns an error, report that the "
-           "action was NOT performed and why, and do not retry. Refer to the record by its number (for example "
-           "{example}) or id.")
+           "record is in the required state and returns what changed. If it returns an error whose message says "
+           "nothing was changed, report that the action was NOT performed and why. If the error says the change "
+           "may have happened (outcome_unverified or unexpected_status), say exactly that, tell the user to check "
+           "the record, and do not claim it was not performed. Never retry. Refer to the record by its number "
+           "(for example {example}) or id.")
 _PAYSLIP_STATUSES = ("review", "approved", "pending_approval", "paid")
 
 
@@ -140,12 +142,46 @@ def digest(payload: Any) -> dict[str, Any]:
     return out
 
 
+def unverified(action: Action, before: dict[str, Any], why: str) -> dict[str, Any]:
+    """The tool was called but the result could not be confirmed, so the change may have happened:
+    never worded as "nothing was changed"."""
+    return {"error": True, "tool": action.tool, "code": "outcome_unverified", "may_have_changed": True,
+            "record": summary(before), "before": before.get("status"),
+            "message": (f"{action.tool} was called but {why}; the change may have happened: check "
+                        f"{_label(action, before)} and do not retry")}
+
+
+def _reply_problem(reply: Any) -> str | None:
+    """Why a tool reply cannot be taken as confirmation, or None. A plain-text or non-dict reply, or one
+    that says success is false, confirms nothing."""
+    if not isinstance(reply, dict):
+        return "it returned no structured reply"
+    if set(reply) <= {"text"} or set(reply) <= {"result"}:
+        return "it returned plain text, not a record"
+    for key in ("success", "ok"):
+        if key in reply and not reply[key]:
+            return f"it reported {key}: false"
+    return None
+
+
 def outcome(action: Action, before: dict[str, Any], after: dict[str, Any], tool_result: Any) -> dict[str, Any]:
     """The result of a call that returned without an error, verified against the re-read record."""
+    moved = after.get("status") != before.get("status")
+    if moved and after.get("status") != action.to_status:
+        return {"error": True, "tool": action.tool, "code": "unexpected_status", "may_have_changed": True,
+                "record": summary(after), "before": before.get("status"), "after": after.get("status"),
+                "message": (f"{action.tool} returned without an error and {_label(action, after)} moved from "
+                            f"{before.get('status')} to {after.get('status')}, not {action.to_status or 'unchanged'}"
+                            "; the change happened: check the record and do not retry")}
     if action.to_status and after.get("status") != action.to_status:
-        return {"error": True, "tool": action.tool, "code": "status_unchanged", "record": summary(after),
+        return {"error": True, "tool": action.tool, "code": "status_unchanged", "may_have_changed": False,
+                "record": summary(after),
                 "message": (f"{action.tool} returned without an error but {_label(action, after)} is "
                             f"{after.get('status')}, not {action.to_status}; check it before retrying")}
+    if action.to_status is None:
+        problem = _reply_problem(tool_result)
+        if problem:
+            return unverified(action, before, problem)
     done = {"performed": True, "action": action.name, "entity": action.entity, "number": before.get("number"),
             "id": before.get("id"), "before": before.get("status"), "after": after.get("status")}
     if action.to_status is None:
