@@ -1,0 +1,18 @@
+{
+  "name": "scaffold_guarded_payrun_refusals",
+  "note": "Scaffold only. Both actions target runs whose real state the platform would also reject (pending_approval, paid), so each must be refused by the guard and nothing changes.",
+  "steps": [
+    {"reply": {"add": [{"id": "calc", "capability": "calculate_payrun",
+                        "arguments": {"jurisdiction": "IN", "reference": "PRUN-2026-00012"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "try to calculate the pending August run"}},
+    {"reply": {"add": [{"id": "cancel", "capability": "cancel_draft_payrun",
+                        "arguments": {"jurisdiction": "IN", "reference": "PRUN-2026-00011"}, "depends_on": ["calc"]}],
+               "cancel": [], "finish": false, "reason": "try to cancel the paid July run"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "Calculate payroll for PRUN-2026-00012, then cancel PRUN-2026-00011."},
+                        "depends_on": ["cancel"]}],
+               "cancel": [], "finish": false, "reason": "both were refused; report that"}},
+    {"reply": {"ready": true, "missing": [], "reason": "both outcomes are refusals, which are ready evidence"}},
+    {"reply": "Scripted answer: neither action was performed; see the refusals in the evidence."}
+  ]
+}

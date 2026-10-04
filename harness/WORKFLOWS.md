@@ -25,12 +25,18 @@ relying on it. Status: **built** (live-verified), **partial**, **todo**.
 | Query | Tools | Status |
 |---|---|---|
 | Run August payroll | `PayRun.run_payroll` | built: refuses when the month's run is not draft/review |
-| Calculate without finalizing (dry run) | `PayRun.calculate_payroll` | todo |
+| Calculate a draft run (draft to review) | `PayRun.calculate_payroll` | built (`calculate_payrun`); refusal verified live, execution only with a fake client |
 | Recalculate after an attendance fix | `PayRun.recalculate_lines` | todo |
-| Generate and send payslips | `PayRun.generate_payslips`, `send_payslips` | todo |
+| Generate payslips; get the distribution list | `PayRun.generate_payslips`, `send_payslips` | built (`generate_payslips`, `send_payslips`; send only reports a list, it emails nobody); fake client only |
 | Submit this run for approval | `PayRun.submit_for_approval` | built |
 | Run an off-cycle or bonus payroll | `PayRun.create` (`run_type=off_cycle`) | todo, unverified |
-| Cancel a draft run | `PayRun.cancel.draft` | todo |
+| Cancel a draft run | `PayRun.cancel.draft.cancelled` | built (`cancel_draft_payrun`); refusal verified live |
+
+Every guarded action (sections B and F) changes shared data that this seat cannot undo, so each runs only with its
+own `--allow <capability>` and goes through one guard pipeline: find the record by number or id, re-read it, check its
+status, the platform's own `_transitions` and an action guard, call the tool once, and re-read to verify. They were
+verified with a fake client and with real-tenant **refusals** only; no real change has been executed. Design:
+`docs/superpowers/specs/2026-10-04-guarded-actions-design.md`.
 
 ## C. Pre-payroll checks (read-only sweeps, computed in Python)
 
@@ -82,10 +88,10 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
 
 | Query | Tools | Status |
 |---|---|---|
-| Calculate a full and final settlement; submit it | `FinalSettlement.calculate_settlement`, `.submit` | todo |
-| Review or apply a salary revision, including arrears | `SalaryRevision` | todo |
-| Loan recovery schedule; submit a loan for approval | `EmployeeLoan`, `LoanRepayment` | todo |
-| Is this investment proof complete? Why rejected? | `InvestmentDeclaration`, `ProofOfInvestment` | todo |
+| Calculate a draft final settlement; submit a calculated one | `FinalSettlement.calculate_settlement`, `.submit` | built (`calculate_settlement`, `submit_final_settlement`); refusal verified live |
+| Submit a draft salary revision; apply an approved one | `SalaryRevision.submit`, `.apply` | built (`submit_salary_revision`, `apply_salary_revision`; apply changes an employee's salary); refusal verified live. Reading pending and backdated revisions (arrears) is `lifecycle_report` on the 6a/6b branch |
+| Submit or cancel a draft loan | `EmployeeLoan.submit`, `.cancel.draft.cancelled` | built (`submit_loan`, `cancel_draft_loan`); submit refusal verified live. The recovery schedule is `lifecycle_report` on the 6a/6b branch |
+| Submit a draft investment declaration | `InvestmentDeclaration.submit` | built (`submit_investment_declaration`); fake client only. Proof completeness is `lifecycle_report` on the 6a/6b branch |
 
 ## G. Refusals and governance (graded: at least one refusal task)
 

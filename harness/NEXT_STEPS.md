@@ -220,7 +220,27 @@ built/partial/todo status. Proposed order:
        (`ui/surface.py` `_find_answer`) does not recognise a decline node; a
        model that repeats "I can't do that:" doubles the prefix; "submit for
        approval" was not tried live (it would mutate the shared August run).
-5. [ ] B/E/F extras (dry-run calculate, payslips, statutory dues, FnF).
+5. [~] B/E/F extras. **6c built** (guarded actions that change data; spec and plan in
+       `docs/superpowers/`): eleven capabilities, each behind its own `--allow` and one
+       shared guard pipeline (find by number or id, re-read, status, the platform's
+       `_transitions`, an action guard, one call, verify): `calculate_payrun`,
+       `generate_payslips`, `send_payslips`, `cancel_draft_payrun`, `submit_loan`,
+       `cancel_draft_loan`, `submit_salary_revision`, `apply_salary_revision`,
+       `calculate_settlement`, `submit_final_settlement`, `submit_investment_declaration`.
+       **Verified:** unit tests with a fake client (every guard, the tool never called on a
+       refusal, stale lists, a tool that "succeeds" without changing status, authority via
+       the planner); two armed scaffold tasks on the real India tenant aimed at records the
+       platform would also reject (pending and paid runs, a cancelled loan, a draft
+       revision, an approved settlement), all five refused with `not_in_required_state`,
+       no mutating call, watched state unchanged; live with the real models, five
+       authorised requests refused by the guard and one unauthorised request declined,
+       again with no mutating call. **Not verified: the allowed paths have never been run
+       against real data** (no undo on this seat); do that only for a named record with the
+       user's approval. `calculate_settlement` accepts a draft only. **Open follow-up:**
+       `lifecycle_report` rows should carry `id` and `number` so the planner can name a
+       record it found; that code is on the unmerged 6a/6b branch, so it follows the merge.
+       6a and 6b (statutory dues, lifecycle reports) are on branch
+       `statutory-and-lifecycle-reads`.
 
 The existing 7 capabilities cover only A (partly) and B (run/submit). Most
 new work is read wrappers plus Python computation.
