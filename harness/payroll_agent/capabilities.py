@@ -277,6 +277,36 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "statutory_dues",
+            "Report the statutory dues one calculated PayRun creates. India: EPF, EPS, EDLI, EPF admin "
+            "charges, ESI, professional tax, TDS and LWF, each with amount, side, source and a cross-check "
+            "against the run header, plus the standard due date (TDS the 7th, EPF and ESI the 15th of the "
+            "following month, labelled as not from AgentSwitch) and the config rates. US: the employee "
+            "withholdings (federal and state income tax, Social Security, Medicare); employer-side US taxes "
+            "are reported as unavailable. Read-only; it says that deposits are not tracked, and if the run "
+            "is not calculated it says so and reports nothing else. Use a `payrun_id` taken from an earlier "
+            "outcome (for example `list_payruns`).",
+            {"jurisdiction": _JURISDICTION,
+             "payrun_id": string("The PayRun to report on.", maximum=200, format="id")},
+            families=("evidence",),
+        ),
+        Capability(
+            "lifecycle_report",
+            "Summarise one lifecycle topic, read-only. `loans`: status, repayment schedule by month and "
+            "data-quality flags (non-positive amounts, negative rates, implausible dates). `revisions`: "
+            "salary revisions by status, the pending ones, backdated pending revisions that imply "
+            "arrears, and revisions whose status and approval status contradict each other. `settlements`: final settlements with their components. `investments`: declarations "
+            "by status and section, declarations without proof, and proofs by approval status. Omit "
+            "`employee_id` for the whole company (the usual case, one call covers everyone); pass it "
+            "(taken from an earlier outcome) only to limit the report to one named employee.",
+            {"jurisdiction": _JURISDICTION,
+             "topic": string("Which topic to report.",
+                             choices=("loans", "revisions", "settlements", "investments")),
+             "employee_id": string("Limit the report to this employee.", required=False, maximum=200,
+                                   format="id")},
+            families=("evidence",),
+        ),
+        Capability(
             "run_payroll",
             "Open (or reuse) the pay run for a month and calculate draft salary slips. "
             "This is the real payroll calculation -- a mutation, not a read. It never "

@@ -19,10 +19,12 @@ import json
 import os
 import weakref
 from dataclasses import dataclass
+from datetime import date
 from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
+from . import cost_report, lifecycle, scan_checks, statutory
 from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -243,7 +245,7 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
 
 
 
-def _named_for(problem: dict[str, Any], name: str) -> dict[str, Any]:
+def _with_tool(problem: dict[str, Any], name: str) -> dict[str, Any]:
     """The shared fetch helper words a short fetch as the scan's; name the calling capability instead."""
     return {**problem, "tool": name} if problem.get("code") == "scan_incomplete" else problem
 
@@ -254,7 +256,7 @@ async def _find_record(ctx: RunContext, action: guarded.Action, reference: str,
     have no number filter, so the entity is listed and matched here."""
     rows, problem = await _fetch_all(ctx, f"{action.entity}.list", {}, jurisdiction)
     if problem:
-        return None, _named_for(problem, action.name)
+        return None, _with_tool(problem, action.name)
     hits = [row for row in rows if reference in (row.get("number"), row.get("id"))]
     if len(hits) == 1:
         return hits[0], None
@@ -297,7 +299,7 @@ async def _run_guarded(ctx: RunContext, task: TaskSpec, action: guarded.Action) 
         if refusal is None and action.needs_calculated:
             rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": before["id"]}, jurisdiction)
             if problem:
-                return _named_for(problem, action.name)
+                return _with_tool(problem, action.name)
             own = [row for row in rows if row.get("payrun_id") == before["id"]]
             if not scan_checks.is_calculated(own):
                 refusal = {"code": "run_not_calculated", "message": f"{action.entity} {before.get('number')} "
@@ -321,6 +323,53 @@ def _guarded_worker(action: guarded.Action) -> Callable[[RunContext, TaskSpec], 
         return await _run_guarded(ctx, task, action)
     worker.__name__ = f"run_{action.name}"
     return worker
+_INDIA_CONFIGS = ("EPFConfig", "ESIConfig", "PTConfig", "LWFConfig")
+_LIFECYCLE_ENTITIES = {"loans": ("EmployeeLoan", "LoanRepayment"), "revisions": ("SalaryRevision",),
+                       "settlements": ("FinalSettlement",),
+                       "investments": ("InvestmentDeclaration", "ProofOfInvestment")}
+
+
+async def run_statutory_dues(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch, then let statutory compute. Never calls a mutating tool."""
+    jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
+    run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
+    if run.get("error"):
+        return run
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "statutory_dues")
+    configs: dict[str, list[dict[str, Any]]] = {}
+    config_problems: list[dict[str, str]] = []
+    # An uncalculated run reports nothing else, so it needs no configs; the US has none to read.
+    if jurisdiction == "IN" and scan_checks.is_calculated(rows):
+        for name in _INDIA_CONFIGS:
+            page = await _call_tool(ctx, f"{name}.list", {"limit": 1}, jurisdiction)
+            if page.get("error"):
+                config_problems.append({"what": name, "reason": f"{name}.list failed: {page.get('message')}"})
+            else:
+                configs[name] = page.get("data") or []
+    result = statutory.build_statutory(run=run, rows=rows, jurisdiction=jurisdiction, configs=configs,
+                                       today=date.today())
+    if result.get("calculated"):
+        result["skipped"].extend(config_problems)
+    return result
+
+
+async def run_lifecycle_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch the topic's entities and the employee names, then let lifecycle compute."""
+    jurisdiction, topic = task.input["jurisdiction"], task.input["topic"]
+    employee_id = task.input.get("employee_id")
+    narrow = {"employee_id": employee_id} if employee_id else {}
+    data: dict[str, list[dict[str, Any]]] = {}
+    for entity in _LIFECYCLE_ENTITIES[topic]:
+        data[entity], problem = await _fetch_all(ctx, f"{entity}.list", narrow, jurisdiction)
+        if problem:
+            return _with_tool(problem, "lifecycle_report")
+    employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "lifecycle_report")
+    return lifecycle.build_lifecycle(topic, data=data, names=lifecycle.employee_names(employees),
+                                     today=date.today(), employee_id=employee_id)
 
 
 
@@ -422,6 +471,8 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "list_payrun_employees": run_list_payrun_employees,
     "pre_payroll_scan": run_pre_payroll_scan,
     "payroll_cost_report": run_payroll_cost_report,
+    "statutory_dues": run_statutory_dues,
+    "lifecycle_report": run_lifecycle_report,
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,
