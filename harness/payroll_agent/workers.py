@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
 
-from . import scan_checks
+from . import cost_report, scan_checks
 from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -202,6 +202,45 @@ async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any
     return {"payrun_id": payrun_id, "run_status": run.get("status"), "compared_to": compared_to, **result}
 
 
+def _named_for_cost_report(problem: dict[str, Any]) -> dict[str, Any]:
+    """The shared fetch helper words a short fetch as the scan's; name this capability instead."""
+    return {**problem, "tool": "payroll_cost_report"} if problem.get("code") == "scan_incomplete" else problem
+
+
+async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch, then let cost_report compute. Never calls a mutating tool."""
+    jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
+    group_by = task.input.get("group_by", "department")
+    compare_to = task.input.get("compare_to")
+    variance_wanted = bool(task.input.get("with_variance")) or bool(compare_to)
+    run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
+    if run.get("error"):
+        return run
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
+    if problem:
+        return _named_for_cost_report(problem)
+    employees: list[dict[str, Any]] = []
+    prev_rows: list[dict[str, Any]] | None = None
+    compared_to: str | None = None
+    reason = "no earlier calculated regular run"
+    # An uncalculated run reports nothing else, so it needs neither the employee list
+    # nor a comparison run.
+    if scan_checks.is_calculated(rows):
+        if group_by != "none":
+            employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
+            if problem:
+                return _named_for_cost_report(problem)
+        if variance_wanted:
+            compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
+            if prev_rows is None:
+                compared_to = None
+    return cost_report.build_report(run=run, rows=rows, employees=employees, group_by=group_by,
+                                    prev_rows=prev_rows, compared_to=compared_to,
+                                    variance_wanted=variance_wanted, variance_reason=reason)
+
+
+
+
 # run_payroll rewrites the slips of whichever run it reuses, and this seat cannot
 # undo that. Only a run still being prepared may be recalculated: draft (never
 # calculated) or review (calculated, not yet handed to an approver).
@@ -296,6 +335,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "get_payrun": run_get_payrun,
     "list_payrun_employees": run_list_payrun_employees,
     "pre_payroll_scan": run_pre_payroll_scan,
+    "payroll_cost_report": run_payroll_cost_report,
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,

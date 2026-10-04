@@ -173,7 +173,30 @@ built/partial/todo status. Proposed order:
    accepted; only the 3 most recent earlier runs are tried for a calculated
    baseline; final-settlement employees (exit inside the period) are flagged high;
    worker tests do not cover a short comparison run or a short `Employee.list`.
-3. [ ] **D: variance and cost reports** (month-over-month, by department).
+3. [x] **D: cost and variance report** built (`payroll_cost_report`, read-only;
+       spec and plan in `docs/superpowers/`). Checked on the India tenant by
+       recomputing from the raw rows: July 2026 (`PRUN-2026-00011`) has 62 payees
+       in 8 departments, gross 2,417,316 and total cost (gross + employer
+       contribution) 2,519,383; the groups match exactly and the PayRun header
+       agrees on all five checked fields. July vs June: cost +45,799 (+1.9%),
+       2 joiners, 0 leavers, overtime -2,463. Live (NVIDIA planner, Groq answer):
+       "cost by department in July" and "why did cost change from June to July"
+       both answered correctly with the report's numbers; "cost by work location"
+       failed in planning (a placeholder payrun id was rejected by the provenance
+       check), the known planner flakiness. One run each.
+       **Found while building:** on this tenant the slips' `overtime_pay` and
+       `overtime_hours` fields are 0 for every employee; overtime is an "Overtime"
+       component in `earnings` (June 54,512, July 52,049). The report reads that
+       component, with the field only as fallback.
+       After an independent review: bad amounts (including nan/inf) are counted
+       and reported for both runs, the header check says `null` when nothing
+       could be compared, a malformed `earnings` value no longer crashes, and a
+       short fetch is named for this capability. Deferred minors: overtime
+       matches any earning whose name contains "overtime" (so "Overtime
+       Recovery" would count; exact matching would undercount names like
+       "Overtime Weekday"); money totals can differ from the sum of rounded
+       parts by a cent; whether `Employee.list` omits leavers on the real tenant
+       (their slips would fall in "(unknown)") was not checked.
 4. [x] **G: refusals** built as a terminal `decline_request` capability
        (spec and plan in `docs/superpowers/`; no model or AgentSwitch call, the
        text is built in code; reason codes `no_such_capability`,
