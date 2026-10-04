@@ -78,6 +78,9 @@ def _validate(task: dict[str, Any], where: str) -> None:
         raise TaskFileError(f"{where}: scripted transport needs a 'script' path")
     if task.get("mode", "dry_run") not in {"dry_run", "live"}:
         raise TaskFileError(f"{where}: mode must be 'dry_run' or 'live'")
+    for spec in task.get("preconditions") or []:
+        if not isinstance(spec, dict) or not spec.get("tool") or not isinstance(spec.get("expect"), dict):
+            raise TaskFileError(f"{where}: each precondition needs a tool and an expect object")
     for verifier_spec in task["verifiers"]:
         if verifier_spec.get("type") not in REGISTRY:
             raise TaskFileError(f"{where}: unknown verifier type {verifier_spec.get('type')!r}; "
@@ -96,6 +99,22 @@ def _prior_live_record(runs_dir: Path, task_id: str) -> Path | None:
 
 def _write(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, default=str))
+
+
+async def check_preconditions(task: dict[str, Any], record: dict[str, Any], client: Any) -> str | None:
+    """Stop an armed task whose target records are not in the state its script assumes (another team
+    may have changed one). Each precondition is an ``agentswitch_state`` check; the task is not run
+    unless every one holds, and a precondition that cannot be read also stops it."""
+    for spec in task.get("preconditions") or []:
+        ctx = VerifyContext(task=task, record=record, before=[], after=[], client=client,
+                            jurisdiction=task["jurisdiction"])
+        try:
+            result = await REGISTRY["agentswitch_state"](ctx, spec)
+        except Exception as problem:
+            return f"precondition could not be checked: {type(problem).__name__}: {problem}"
+        if not result["ok"]:
+            return f"precondition not met: {result['claim']} (observed {result['observed']}); the task was not run"
+    return None
 
 
 async def _preflight(task: dict[str, Any], llm: Any, agentswitch: AgentSwitchClient) -> str | None:
@@ -140,6 +159,8 @@ async def run_task(task: dict[str, Any], args: argparse.Namespace, run_dir: Path
                 record["snapshots"]["before"] = await snapshot.capture(inner, jurisdiction, watch)
             except Exception as problem:
                 record["preflight_error"] = f"snapshot before failed: {type(problem).__name__}: {problem}"
+        if not record["preflight_error"]:
+            record["preflight_error"] = await check_preconditions(task, record, inner)
         if not record["preflight_error"]:
             try:
                 record["result"] = await run_goal(

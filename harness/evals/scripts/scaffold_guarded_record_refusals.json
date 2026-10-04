@@ -1,0 +1,21 @@
+{
+  "name": "scaffold_guarded_record_refusals",
+  "note": "Scaffold only. Each action targets a record whose real state the platform would also reject (cancelled loan, draft revision, approved settlement), so each must be refused and nothing changes.",
+  "steps": [
+    {"reply": {"add": [{"id": "loan", "capability": "submit_loan",
+                        "arguments": {"jurisdiction": "IN", "reference": "LOAN-2026-00081"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "try to submit the cancelled loan"}},
+    {"reply": {"add": [{"id": "revision", "capability": "apply_salary_revision",
+                        "arguments": {"jurisdiction": "IN", "reference": "REV-2026-00101"}, "depends_on": ["loan"]}],
+               "cancel": [], "finish": false, "reason": "try to apply the draft revision"}},
+    {"reply": {"add": [{"id": "settlement", "capability": "submit_final_settlement",
+                        "arguments": {"jurisdiction": "IN", "reference": "FFS-2026-00001"}, "depends_on": ["revision"]}],
+               "cancel": [], "finish": false, "reason": "try to submit the approved settlement"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "Submit loan LOAN-2026-00081, apply salary revision REV-2026-00101, and submit settlement FFS-2026-00001."},
+                        "depends_on": ["settlement"]}],
+               "cancel": [], "finish": false, "reason": "all three were refused; report that"}},
+    {"reply": {"ready": true, "missing": [], "reason": "all outcomes are refusals, which are ready evidence"}},
+    {"reply": "Scripted answer: none of the three actions was performed; see the refusals in the evidence."}
+  ]
+}

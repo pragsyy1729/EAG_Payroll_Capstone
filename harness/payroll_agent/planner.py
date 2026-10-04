@@ -221,7 +221,8 @@ class PayrollPlanner:
             if node["state"] != "succeeded" or node["skill"] not in self.registry:
                 continue
             result = node.get("result")
-            if self.registry.get(node["skill"]).side_effect and not (isinstance(result, dict) and result.get("error")):
+            refused = isinstance(result, dict) and result.get("error") and not result.get("may_have_changed")
+            if self.registry.get(node["skill"]).side_effect and not refused:
                 raise PlannerOutputError(
                     f"decline_request is not valid after {node_id} changed data; "
                     "report what happened with answer_with_evidence")

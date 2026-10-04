@@ -27,6 +27,8 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import guarded
+
 _MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
@@ -350,4 +352,12 @@ def default_registry() -> CapabilityRegistry:
              "alternative": string("What can be done instead, if anything.", required=False, maximum=300)},
             role="answer", terminal_for=("text",), needs_evidence=False,
         ),
+        # One capability per guarded action: authority is per action (`--allow <name>`), and the
+        # planner hides a side-effect capability that is not allowed.
+        *[Capability(action.name, action.capability_description(),
+                     {"jurisdiction": _JURISDICTION,
+                      "reference": string("The record's number (for example " + action.example + ") or id.",
+                                          maximum=200, format="id")},
+                     side_effect=True)
+          for action in guarded.ACTIONS.values()],
     ])

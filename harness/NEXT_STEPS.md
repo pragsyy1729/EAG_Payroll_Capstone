@@ -220,7 +220,40 @@ built/partial/todo status. Proposed order:
        (`ui/surface.py` `_find_answer`) does not recognise a decline node; a
        model that repeats "I can't do that:" doubles the prefix; "submit for
        approval" was not tried live (it would mutate the shared August run).
-5. [~] B/E/F extras. **6a and 6b built** (read-only; spec and plan in
+5a. [~] B/E/F extras. **6c built** (guarded actions that change data; spec and plan in
+       `docs/superpowers/`): eleven capabilities, each behind its own `--allow` and one
+       shared guard pipeline (find by number or id, re-read, status, the platform's
+       `_transitions`, an action guard, one call, verify): `calculate_payrun`,
+       `generate_payslips`, `send_payslips`, `cancel_draft_payrun`, `submit_loan`,
+       `cancel_draft_loan`, `submit_salary_revision`, `apply_salary_revision`,
+       `calculate_settlement`, `submit_final_settlement`, `submit_investment_declaration`.
+       **Verified:** unit tests with a fake client (every guard, the tool never called on a
+       refusal, stale lists, a tool that "succeeds" without changing status, authority via
+       the planner); two armed scaffold tasks on the real India tenant aimed at records the
+       platform would also reject (pending and paid runs, a cancelled loan, a draft
+       revision, an approved settlement), all five refused with `not_in_required_state`,
+       no mutating call, watched state unchanged; live with the real models, five
+       authorised requests refused by the guard and one unauthorised request declined,
+       again with no mutating call. **Not verified: the allowed paths have never been run
+       against real data** (no undo on this seat); do that only for a named record with the
+       user's approval. `calculate_settlement` accepts a draft only. **Open follow-up:**
+       **After an independent review (no critical issues; no path reached an action tool
+       past a refusal):** a failed re-read or transport error after the call is now
+       `outcome_unverified` (may have changed), never "nothing was changed", and the planner
+       blocks a decline after it; payslip replies are verified; payslip rows are filtered to
+       the run; a per-record lock stops two concurrent actions both passing their guards (the
+       race test failed before the lock); the armed eval tasks re-read their targets first and
+       will not run if another team changed one (a deliberately wrong precondition stopped a
+       task with 0 agent calls). Deferred minors: a record without an `id` raises a raw
+       KeyError before any call; a `None` reference is not rejected up front;
+       `_named_for` duplicates `_named_for_cost_report` (and `_with_tool` on the 6a/6b
+       branch), so unify when merging; `send_payslips`/`generate_payslips` descriptions read
+       like read questions; the guard imports the private `cost_report._finite`.
+       **Open follow-up:** `lifecycle_report` rows should carry `id` and `number` so the planner can name a
+       record it found; that code is on the unmerged 6a/6b branch, so it follows the merge.
+       6a and 6b (statutory dues, lifecycle reports) are on branch
+       `statutory-and-lifecycle-reads`.
+5b. [~] B/E/F extras. **6a and 6b built** (read-only; spec and plan in
        `docs/superpowers/`): `statutory_dues` and `lifecycle_report`. **6c, the
        guarded actions that change data (dry-run calculate, generate/send payslips,
        submit a loan, revision or settlement for approval, calculate a settlement),
