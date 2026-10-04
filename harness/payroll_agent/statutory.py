@@ -57,20 +57,24 @@ def _amount(value: Any, bad: list[int]) -> float:
 def _entry(due: date, rule: str, today: date) -> dict[str, Any]:
     days = (due - today).days
     return {"date": due.isoformat(), "rule": rule, "basis": INDIA_BASIS,
-            "status": "overdue" if days < 0 else "due_today" if days == 0 else "upcoming", "days_left": days}
+            "status": "past_due_date" if days < 0 else "due_today" if days == 0 else "upcoming", "days_left": days}
 
 
 def due_dates(period_end: str | None, today: date) -> dict[str, dict[str, Any]]:
     """Standard India calendar for a period ending ``period_end`` (YYYY-MM-DD); {} if unusable."""
     try:
         end = date.fromisoformat(str(period_end)[:10])
+        if not 2000 <= end.year <= 2100:               # the next month must also be a real date
+            return {}
+        year, month = (end.year + 1, 1) if end.month == 12 else (end.year, end.month + 1)
+        if year > 2100:
+            return {}
+        tds = date(year, 4, 30) if end.month == 3 else date(year, month, 7)
+        return {"tds": _entry(tds, "TDS: 7th of the following month (30 April for March)", today),
+                "epf": _entry(date(year, month, 15), "EPF: 15th of the following month", today),
+                "esi": _entry(date(year, month, 15), "ESI: 15th of the following month", today)}
     except ValueError:
         return {}
-    year, month = (end.year + 1, 1) if end.month == 12 else (end.year, end.month + 1)
-    tds = date(year, 4, 30) if end.month == 3 else date(year, month, 7)
-    return {"tds": _entry(tds, "TDS: 7th of the following month (30 April for March)", today),
-            "epf": _entry(date(year, month, 15), "EPF: 15th of the following month", today),
-            "esi": _entry(date(year, month, 15), "ESI: 15th of the following month", today)}
 
 
 def _india(rows: list[dict[str, Any]], run: dict[str, Any], dues: dict[str, Any],
@@ -94,22 +98,30 @@ def _india(rows: list[dict[str, Any]], run: dict[str, Any], dues: dict[str, Any]
     return statutes, consistency
 
 
+_EMPLOYER_SIDE = ("employer", "match", "unemployment", "futa", "suta")
+
+
 def _us_label(name: str) -> str | None:
+    """An employee withholding, or None for anything else. Employer-side items (an employer match,
+    FUTA/SUTA) and a Medicare surtax must never be summed into the employee rows."""
     text = name.lower()
+    if any(word in text for word in _EMPLOYER_SIDE) or "surtax" in text:
+        return None
     if "social security" in text:
         return "Social Security"
     if "medicare" in text:
         return "Medicare"
     if "federal" in text:
         return "Federal income tax"
-    if "state" in text and "withholding" in text:
+    if "state" in text and any(word in text for word in ("withholding", "income", "tax")):
         return "State income tax"
     return None
 
 
 def _us(rows: list[dict[str, Any]], run: dict[str, Any], bad: list[int]
-        ) -> tuple[list[dict[str, Any]], dict[str, Any], float, dict[str, float]]:
+        ) -> tuple[list[dict[str, Any]], dict[str, Any], float, dict[str, float], dict[str, float]]:
     sums: dict[str, float] = defaultdict(float)
+    components: dict[str, float] = defaultdict(float)
     other = total = 0.0
     for row in rows:
         items = row.get("deductions")
@@ -123,6 +135,7 @@ def _us(rows: list[dict[str, Any]], run: dict[str, Any], bad: list[int]
                 sums[label] += amount
             else:
                 other += amount
+                components[str(item.get("component_name", ""))] += amount
     statutes = [{"statute": label, "side": "employee", "amount": round(sums[label], 2),
                  "source": "slip deductions", "available": True, "header_total": None, "due": None, "note": None}
                 for label in _US_ORDER if sums.get(label)]
@@ -134,7 +147,7 @@ def _us(rows: list[dict[str, Any]], run: dict[str, Any], bad: list[int]
         differences["total_deductions"] = {"header": header, "slips": round(total, 2)}
     consistency = {"matches": (not differences) if header is not None else None,
                    "compared": int(header is not None), "differences": differences}
-    return statutes, consistency, round(other, 2), dict(sums)
+    return statutes, consistency, round(other, 2), dict(sums), dict(components)
 
 
 def _rate_checks(rows: list[dict[str, Any]], sums: dict[str, float], bad: list[int]) -> list[dict[str, Any]]:
@@ -189,8 +202,10 @@ def build_statutory(*, run: dict[str, Any], rows: list[dict[str, Any]], jurisdic
             skipped.append({"what": "config", "reason": "no India config rows found"})
         extra: dict[str, Any] = {"flags": {"esi_covered_above_ceiling": flag} if flag else {}, "config": config}
     else:
-        statutes, consistency, other, sums = _us(rows, run, bad)
-        extra = {"rate_checks": _rate_checks(rows, sums, bad), "non_statutory_deductions": other}
+        statutes, consistency, other, sums, components = _us(rows, run, bad)
+        biggest = sorted(components.items(), key=lambda item: (-abs(item[1]), item[0]))[:10]
+        extra = {"rate_checks": _rate_checks(rows, sums, bad), "non_statutory_deductions": other,
+                 "non_statutory_components": {name: round(amount, 2) for name, amount in biggest}}
     if bad[0]:
         skipped.append({"what": "amounts", "reason": f"{bad[0]} unusable amount(s) counted as 0"})
     return {**head, "calculated": True, "statutes": statutes, "consistency": consistency, **extra,

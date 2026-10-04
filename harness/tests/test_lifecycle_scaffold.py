@@ -84,7 +84,7 @@ def test_loans_with_unusable_values_or_dates_never_crash():
     out = lc.loans_report(odd, [{"loan_id": "L9", "date": "garbage", "status": "scheduled",
                                  "total_amount": "?"}], NAMES, TODAY)
     assert out["unusable_amounts"] == 4
-    assert checks(out) == {"implausible_disbursement_date": 1}
+    assert checks(out) == {"implausible_disbursement_date": 1, "repayment_date_implausible": 1}
 
 
 REVS = [
@@ -185,3 +185,28 @@ def test_a_pending_revision_whose_approval_status_says_approved_or_rejected_is_f
     assert conflicts["count"] == 2                                     # REV-A and REV-B; REV-D is not pending
     assert {e["number"] for e in conflicts["examples"]} == {"REV-A", "REV-B"}
     assert "pending approval" in conflicts["note"]
+
+
+def test_repayment_months_use_only_plausible_dates_and_bad_dates_are_counted():
+    base = {"loan_id": "L1", "employee_id": "a", "status": "scheduled", "total_amount": 100.0,
+            "principal_amount": 90.0}
+    repayments = [{**base, "date": "2026-11-30"}, {**base, "date": None}, {**base, "date": "0009-03-15"},
+                  {**base, "date": "garbage"}, {**base, "date": {"a": 1}}, {**base, "date": "2026-12-31"}]
+    out = lc.loans_report([], repayments, NAMES, TODAY)["repayments"]
+    assert [m["month"] for m in out["scheduled_by_month"]] == ["2026-11", "2026-12"]
+    assert out["scheduled_with_bad_date"] == 4              # the missing date, "0009-03-15", "garbage", the dict
+    report = lc.loans_report([], repayments, NAMES, TODAY)
+    assert {c["check"]: c["count"] for c in report["data_quality"]["checks"]} == {"repayment_date_implausible": 3}
+
+
+def test_a_bad_date_never_pushes_real_months_out_of_the_cap():
+    base = {"loan_id": "L1", "employee_id": "a", "status": "scheduled", "total_amount": 1.0, "principal_amount": 1.0}
+    months = [{**base, "date": f"2027-{m:02d}-15"} for m in range(1, 13)] + [{**base, "date": "0009-01-01"}] * 3
+    out = lc.loans_report([], months, NAMES, TODAY)["repayments"]
+    assert [m["month"] for m in out["scheduled_by_month"]][:2] == ["2027-01", "2027-02"]
+    assert len(out["scheduled_by_month"]) == 12 and out["scheduled_with_bad_date"] == 3
+
+
+def test_records_with_issues_counts_loans_that_have_no_number_or_id():
+    loans = [{"loan_amount": -1.0, "employee_id": "a"}, {"loan_amount": -2.0, "employee_id": "b"}]
+    assert lc.loans_report(loans, [], NAMES, TODAY)["data_quality"]["records_with_issues"] == 2

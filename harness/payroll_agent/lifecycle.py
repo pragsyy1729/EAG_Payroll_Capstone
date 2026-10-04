@@ -34,6 +34,12 @@ def _date(value: Any) -> date | None:
         return None
 
 
+def _plausible(value: Any) -> date | None:
+    """A parseable date in a sane year; the shared tenants hold dates like 0009-09-12."""
+    parsed = _date(value)
+    return parsed if parsed is not None and 2000 <= parsed.year <= 2100 else None
+
+
 def _name(employee: dict[str, Any]) -> str | None:
     full = f"{employee.get('first_name') or ''} {employee.get('last_name') or ''}".strip()
     return full or employee.get("_party_id_display") or employee.get("_display")
@@ -68,10 +74,8 @@ def _loan_issues(loan: dict[str, Any], bad: list[int]) -> list[tuple[str, Any]]:
     if rate is not None and rate < 0:
         found.append(("negative_interest_rate", rate))
     raw = loan.get("disbursement_date")
-    if raw:
-        disbursed = _date(raw)
-        if disbursed is None or not 2000 <= disbursed.year <= 2100:
-            found.append(("implausible_disbursement_date", raw))
+    if raw and _plausible(raw) is None:
+        found.append(("implausible_disbursement_date", raw))
     return found
 
 
@@ -80,7 +84,7 @@ def loans_report(loans: list[dict[str, Any]], repayments: list[dict[str, Any]], 
     loans, repayments = _only(loans, employee_id), _only(repayments, employee_id)
     bad = [0]
     issues: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    flawed: set[Any] = set()
+    flawed = 0
     valid_amount = valid_repaid = 0.0
     counted = excluded = 0
     for loan in loans:
@@ -88,8 +92,7 @@ def loans_report(loans: list[dict[str, Any]], repayments: list[dict[str, Any]], 
         found = _loan_issues(loan, bad)
         for check, value in found:
             issues[check].append({**ref, "value": value})
-        if found:
-            flawed.add(loan.get("number") or loan.get("id"))
+        flawed += bool(found)
         amount = finite(loan.get("loan_amount"))
         if amount is not None and amount > 0:
             counted += 1
@@ -99,6 +102,7 @@ def loans_report(loans: list[dict[str, Any]], repayments: list[dict[str, Any]], 
             excluded += 1
     by_month: dict[str, dict[str, float]] = defaultdict(lambda: {"count": 0, "total": 0.0})
     past = {"count": 0, "total": 0.0}
+    bad_dated = 0
     for repayment in repayments:
         ref = {"loan_id": repayment.get("loan_id"), "employee_id": repayment.get("employee_id"),
                "date": repayment.get("date")}
@@ -107,12 +111,17 @@ def loans_report(loans: list[dict[str, Any]], repayments: list[dict[str, Any]], 
             issues["repayment_principal_negative"].append({**ref, "value": principal})
         if total is not None and total <= 0:
             issues["repayment_total_not_positive"].append({**ref, "value": total})
+        when = _plausible(repayment.get("date"))
+        if when is None and repayment.get("date"):
+            issues["repayment_date_implausible"].append({**ref, "value": repayment.get("date")})
         if repayment.get("status") == "scheduled":
-            month = by_month[str(repayment.get("date"))[:7]]
+            if when is None:
+                bad_dated += 1
+                continue
+            month = by_month[f"{when.year:04d}-{when.month:02d}"]
             month["count"] += 1
             month["total"] += total or 0.0
-            when = _date(repayment.get("date"))
-            if when is not None and when < today:
+            if when < today:
                 past["count"] += 1
                 past["total"] += total or 0.0
     months = [{"month": key, "count": value["count"], "total": round(value["total"], 2)}
@@ -126,8 +135,9 @@ def loans_report(loans: list[dict[str, Any]], repayments: list[dict[str, Any]], 
                        "loans_counted": counted, "excluded_invalid": excluded},
             "repayments": {"total": len(repayments), "by_status": _count(repayments),
                            "scheduled_by_month": months[:MAX_MONTHS], "scheduled_months_truncated": len(months) > MAX_MONTHS,
+                           "scheduled_with_bad_date": bad_dated,
                            "scheduled_in_the_past": {"count": past["count"], "total": round(past["total"], 2)}},
-            "data_quality": {"records_with_issues": len(flawed),
+            "data_quality": {"records_with_issues": flawed,
                              "checks": [{"check": check, "count": len(found), "examples": found[:MAX_EXAMPLES]}
                                         for check, found in sorted(issues.items())]},
             "items": items, "unusable_amounts": bad[0]}

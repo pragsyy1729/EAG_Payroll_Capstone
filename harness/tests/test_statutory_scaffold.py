@@ -55,7 +55,7 @@ def test_due_dates_for_march_and_december_periods():
 
 def test_due_status_overdue_and_due_today():
     late = st.due_dates("2026-07-31", date(2026, 8, 20))
-    assert late["tds"]["status"] == "overdue" and late["tds"]["days_left"] == -13
+    assert late["tds"]["status"] == "past_due_date" and late["tds"]["days_left"] == -13
     assert st.due_dates("2026-07-31", date(2026, 8, 15))["epf"]["status"] == "due_today"
 
 
@@ -162,3 +162,25 @@ def test_an_uncalculated_run_reports_nothing_else():
 def test_unusable_india_amounts_are_counted_once():
     out = india(rows=[slip(epf_employee="abc", epf_employer=100), slip(epf_employee=float("nan"))])
     assert {"what": "amounts", "reason": "2 unusable amount(s) counted as 0"} in out["skipped"]
+
+
+def test_a_period_outside_a_plausible_year_range_gives_no_due_dates_and_never_crashes():
+    assert st.due_dates("9999-12-31", TODAY) == {}
+    assert st.due_dates("0009-03-31", TODAY) == {}
+    assert st.due_dates("2100-12-31", TODAY) == {}          # the following January would be 2101
+
+
+def test_us_names_are_classified_without_mixing_employer_items_into_employee_rows():
+    components = [("Social Security", 62), ("Social Security Employer", 62), ("Medicare", 14.5),
+                  ("Medicare Surtax", 5), ("Federal Withholding", 100), ("Federal Unemployment", 6),
+                  ("Ohio State Withholding", 10), ("State Income Tax", 30), ("State Disability", 4)]
+    row = {"employee_id": "a", "gross_pay": 1000.0, "net_pay": 700.0,
+           "deductions": [{"component_name": name, "amount": amount} for name, amount in components]}
+    out = us(rows=[row], run={**RUN_US, "total_deductions": sum(amount for _, amount in components)})
+    employee = {s["statute"]: s["amount"] for s in out["statutes"] if s["side"] == "employee"}
+    assert employee == {"Federal income tax": 100.0, "State income tax": 40.0, "Social Security": 62.0,
+                        "Medicare": 14.5}
+    assert out["non_statutory_components"] == {"Social Security Employer": 62.0, "Federal Unemployment": 6.0,
+                                               "Medicare Surtax": 5.0, "State Disability": 4.0}
+    assert out["non_statutory_deductions"] == 77.0
+    assert out["consistency"]["matches"] is True
