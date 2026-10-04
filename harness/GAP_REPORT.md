@@ -62,6 +62,10 @@ Features to incorporate in Suryodhaya/Keystone:
 
 ## Second pass: platform gap vs. orchestration opportunity
 
+> **Superseded where it disagrees with the third pass below.** This second pass was
+> a hypothesis; the third pass checks it against the live tool catalogue and against
+> what has since been built and run on live data.
+
 The guide's worked Ledger/Rillet example splits each gap into "belongs to
 the platform team" vs. "orchestration over the current API, and it is
 yours." Applying that split below, against actual schema primitives
@@ -84,6 +88,118 @@ no platform change needed — a stronger and more specific answer than "none
 of the available tools will close these gaps." Worth revising before this
 report is treated as final, and worth confirming against the live scoped
 `tools/list` result rather than the static schema export.
+
+## Third pass: checked against the live tool catalogue (2026-10-04)
+
+> Drafted by Claude from live checks of the India and US tenants; for the team to
+> review, edit and own before this report is treated as final.
+
+The second pass was a hypothesis. This pass checked it against the live `tools/list`
+(360 tools visible to our seat) and against what has been built and run on live data
+since: `pre_payroll_scan`, `payroll_cost_report`, `statutory_dues`, `lifecycle_report`,
+the guarded actions and `decline_request` (see `NEXT_STEPS.md`).
+
+| # | Feature | Status | In one line |
+|---|---|---|---|
+| 3 | Nightly Payroll Simulation & Risk Alerts | **Core implemented; scheduling and alert delivery remaining** | The checks exist and run on live data; the nightly trigger and the place to send alerts are not wired up, and the ID/bank checks are impossible for our role. |
+| 5 | Compensation Scenario Simulator | **Feasible as a labelled estimate; not yet built** | The platform cannot calculate hypotheticals, so we would read the real payslip and recompute the affected parts ourselves, read-only. |
+| 6 | Fraud Prevention & Field Lockdowns | **Platform deficiency; the agent can only detect** | The enforcement tools are not on our tool list; the platform would need to provide the six things listed below. |
+
+### Gap 3: Nightly Payroll Simulation & Risk Alerts
+
+**Built and verified on live data.** `pre_payroll_scan` checks a calculated run for
+employees paid after leaving or suspended, large net-pay changes against the previous
+run, zero, negative or missing net pay, and duplicate payees. It refuses to scan a run
+that has not been calculated. `payroll_cost_report` adds cost and variance, with a
+check that the run header matches the payslips. Both pass scaffold tasks against the
+real India tenant, and were also run directly against the US tenant. `Attendance.is_lop` and `lop_hours` are readable (not yet
+used in a check), and company bank-account change timestamps are readable
+(`PayrollBankAccount.updated_at`, two company accounts).
+
+**Remaining.** (a) The nightly trigger: the repo's event engine (`payroll_agent/events/`)
+can host it, and the platform has `AgentTask` scheduling. (b) An alert destination, for
+example `AgentEscalation.create`; that is a write, so the team should decide it.
+
+**Not possible for our role.** "Missing statutory IDs (UAN, tax numbers)" and
+"duplicate bank account numbers" cannot be checked: PAN, Aadhaar, bank account number,
+IFSC and bank name are in `_redacted_fields` for our role (0 of 100 employees expose a
+value). "Bank account changes within 72 hours" is possible for the company's accounts
+only, not employees'.
+
+**Platform ask (small).** Expose, to payroll roles, a presence flag or a masked or
+hashed fingerprint for PAN, UAN and bank accounts, and change timestamps for employee
+bank details.
+
+### Gap 5: Compensation Scenario Simulator
+
+**Why the second pass was too optimistic.** `PayRun.calculate_payroll` computes only
+from stored records; there is no hypothetical-input mode. Simulating by writing fake
+revisions or runs into the shared tenant cannot be undone from our seat, so that route
+is not recommended.
+
+**Approach that works.** Read the employee's real latest payslip and salary structure,
+apply the hypothetical change in code, recompute only the affected components from the
+real configuration (EPF rates and ceilings, ESI rate and ceiling, professional-tax
+slabs), and return the result labelled as an estimate. It only reads, so nothing is
+written.
+
+**Limits.** Income tax (TDS) depends on the year's projected income, the regime and
+declared investments. `TaxConfig` holds no slabs, so the TDS effect can only be
+estimated from the employee's current TDS and must be labelled as an estimate.
+
+**How we would check accuracy.** Replay salary revisions that were already applied
+(status `applied`) and compare the predicted net pay with the actual payslip after the
+change.
+
+**Platform ask (optional).** A dry-run flag on `calculate_payroll` that accepts
+overrides and writes nothing.
+
+### Gap 6: Fraud Prevention & Field Lockdowns
+
+**The second pass's mechanism is not available to us.** `ApprovalPolicy`,
+`ApprovalGroup`, `PayrollRunControl` (funding state or freeze) and `AuditEvent` are not
+on our seat's tool list. Our seat can submit records for approval but has no approve
+tool (the platform enforces that separation), and there is no field-level lock and no
+payout freeze.
+
+**What the agent can do: detect and report.** Examples found on live data: 14 of 73
+pending salary revisions carry an `approval_status` of approved or rejected that
+contradicts their `pending_approval` status; 2 of 102 loans were accepted with a
+negative or zero EMI or tenure, a negative interest rate, and in one case a disbursement
+date in year 0009. These may be class test data rather than platform faults.
+
+**What the platform would have to provide to close this gap**
+
+1. An approval policy that requires N approvers (a quorum) on changes to named
+   sensitive fields (salary rate, bank details), enforced by the platform and not by the
+   client.
+2. Field-level locks or write permissions, so a role can be barred from editing those
+   fields directly.
+3. A payout hold (freeze) on a run or payment, settable by an approver or by a flag
+   raised from a detection, effective before funds move.
+4. An audit log readable by the payroll seat, with the actor, timestamp, before and
+   after values, and the source IP or location.
+5. A privacy-safe way to compare bank accounts across employees (masked or hashed
+   fingerprints), so duplicates can be found without exposing account numbers.
+6. Validation when records are written: positive amounts, EMI and tenure, plausible
+   dates, and a status consistent with the approval status.
+
+### Revised answer to question 2
+
+**Partly.** Of the six gaps, with the tools our seat already has:
+
+- **3** is implemented at its core and needs only a trigger and an alert destination;
+  two of its checks are impossible for our role.
+- **5** is feasible as a clearly labelled estimate, read-only.
+- **6** is a platform deficiency; the agent can detect problems but not enforce
+  approvals, locks or freezes. The platform asks are listed above.
+- **1** (automated compliance updates) is partly orchestration: watch configuration
+  `effective_from` and `effective_to` dates and propose changes for a human to approve.
+  Not re-verified in this pass.
+- **2** (proof-of-investment verification) depends on a vision-capable model provider,
+  which has not been checked.
+- **4** (cross-entity cost allocation) is a platform gap: no multi-entity split fields
+  or timesheet-to-project hours.
 
 ## What we are actually building, and what's graded
 
