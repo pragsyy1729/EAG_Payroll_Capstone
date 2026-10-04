@@ -17,10 +17,11 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import date
 from functools import partial
 from typing import Any, Awaitable, Callable
 
-from . import cost_report, scan_checks
+from . import cost_report, lifecycle, scan_checks, statutory
 from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -241,6 +242,62 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
 
 
 
+def _with_tool(problem: dict[str, Any], name: str) -> dict[str, Any]:
+    """The shared fetch helper words a short fetch as the scan's; name the calling capability instead."""
+    return {**problem, "tool": name} if problem.get("code") == "scan_incomplete" else problem
+
+
+_INDIA_CONFIGS = ("EPFConfig", "ESIConfig", "PTConfig", "LWFConfig")
+_LIFECYCLE_ENTITIES = {"loans": ("EmployeeLoan", "LoanRepayment"), "revisions": ("SalaryRevision",),
+                       "settlements": ("FinalSettlement",),
+                       "investments": ("InvestmentDeclaration", "ProofOfInvestment")}
+
+
+async def run_statutory_dues(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch, then let statutory compute. Never calls a mutating tool."""
+    jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
+    run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
+    if run.get("error"):
+        return run
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "statutory_dues")
+    configs: dict[str, list[dict[str, Any]]] = {}
+    config_problems: list[dict[str, str]] = []
+    # An uncalculated run reports nothing else, so it needs no configs; the US has none to read.
+    if jurisdiction == "IN" and scan_checks.is_calculated(rows):
+        for name in _INDIA_CONFIGS:
+            page = await _call_tool(ctx, f"{name}.list", {"limit": 1}, jurisdiction)
+            if page.get("error"):
+                config_problems.append({"what": name, "reason": f"{name}.list failed: {page.get('message')}"})
+            else:
+                configs[name] = page.get("data") or []
+    result = statutory.build_statutory(run=run, rows=rows, jurisdiction=jurisdiction, configs=configs,
+                                       today=date.today())
+    if result.get("calculated"):
+        result["skipped"].extend(config_problems)
+    return result
+
+
+async def run_lifecycle_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch the topic's entities and the employee names, then let lifecycle compute."""
+    jurisdiction, topic = task.input["jurisdiction"], task.input["topic"]
+    employee_id = task.input.get("employee_id")
+    narrow = {"employee_id": employee_id} if employee_id else {}
+    data: dict[str, list[dict[str, Any]]] = {}
+    for entity in _LIFECYCLE_ENTITIES[topic]:
+        data[entity], problem = await _fetch_all(ctx, f"{entity}.list", narrow, jurisdiction)
+        if problem:
+            return _with_tool(problem, "lifecycle_report")
+    employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "lifecycle_report")
+    return lifecycle.build_lifecycle(topic, data=data, names=lifecycle.employee_names(employees),
+                                     today=date.today(), employee_id=employee_id)
+
+
+
+
 # run_payroll rewrites the slips of whichever run it reuses, and this seat cannot
 # undo that. Only a run still being prepared may be recalculated: draft (never
 # calculated) or review (calculated, not yet handed to an approver).
@@ -336,6 +393,8 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "list_payrun_employees": run_list_payrun_employees,
     "pre_payroll_scan": run_pre_payroll_scan,
     "payroll_cost_report": run_payroll_cost_report,
+    "statutory_dues": run_statutory_dues,
+    "lifecycle_report": run_lifecycle_report,
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,
