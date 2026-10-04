@@ -116,7 +116,7 @@ one call and explains the result. Both are read-only: only `.get` and `.list`.
   - Professional tax and LWF: no date (state schedules vary); the config's cycle
     is echoed instead.
   - Each due entry is `{"date", "rule", "basis": "standard India calendar, not
-    from AgentSwitch", "status": "overdue" | "due_today" | "upcoming",
+    from AgentSwitch", "status": "past_due_date" | "due_today" | "upcoming",
     "days_left"}`, with status measured against today.
   - The US gets no dates.
 - **ESI flag:** employees with `esi_covered` true and gross above the config's
@@ -190,6 +190,21 @@ with the real models, with each number verified against the raw rows.
 "team"`. Natural openings: the dues totals equal the header, the TDS due date,
 the US employer rows being unavailable, a loan with a non-positive amount being
 flagged, pending revisions being backdated, and `answer_grounded`.
+
+## Rules added after the independent review
+
+- US component names are classified with employer-side words ("employer", "match",
+  "unemployment", FUTA, SUTA) and "surtax" excluded first, so they never inflate the
+  employee rows; unclassified components are listed under `non_statutory_components`.
+  A state tax needs "state" plus "withholding", "income" or "tax".
+- Due dates are only produced for pay period ends in 2000 to 2100 whose following
+  month is also in range; anything else gives no dates (never an error).
+- Repayment months use only plausible dates (year 2000 to 2100); present-but-bad dates
+  are a `repayment_date_implausible` check, and scheduled repayments that cannot be
+  placed in a month are counted in `scheduled_with_bad_date`.
+- `records_with_issues` counts loans, not distinct numbers.
+- The due status is `past_due_date` (not "overdue"): AgentSwitch cannot say whether a
+  past due date was met.
 
 ## Limitations and open items
 

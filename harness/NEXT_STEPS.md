@@ -229,7 +229,7 @@ built/partial/todo status. Proposed order:
        **Result (India July, US August, loans, revisions; recomputed from raw rows):**
        July dues EPF 93,405 + 93,405, ESI 1,999 + 8,662, PT 12,400, TDS 49,669, all
        equal to the header totals; TDS due 2026-08-07, EPF and ESI 2026-08-15 (past, so
-       "overdue", but deposits are not tracked). US August withholdings: federal
+       `past_due_date`, since deposits are not tracked). US August withholdings: federal
        29,650, state 6,794.79, Social Security 15,144.06 (6.13% of gross), Medicare
        3,582.71 (1.45%), equal to the slip components and the header. Loans: all 102
        loans and 194 repayments read (paging works past 100); only 2 loans carry
@@ -243,6 +243,15 @@ built/partial/todo status. Proposed order:
        reports): loans accepted with negative or zero EMI, tenure and rate and a year-0009
        date; salary revisions in status `pending_approval` with a contradicting
        `approval_status`. They may be class test data rather than platform bugs.
+       After an independent review: US employer-side and surtax components no longer
+       inflate the employee rows (they are listed as non-statutory), a far-future
+       period can no longer crash the due dates, bad repayment dates no longer create
+       junk months, `records_with_issues` counts loans, and the due status is
+       `past_due_date`. Deferred minors: an unreadable header total is only "not
+       compared"; unusable-amount counts can repeat across the pending, backdated and
+       conflict lists; `total_net_settlement` sums every status; a declaration with no
+       id can collide with a proof with no `declaration_id`; the ESI flag uses
+       truthiness; the config echo uses the first config row only.
        Found while testing: with the capability description unchanged, the planner
        once fetched loans one employee at a time and concluded evidence was missing;
        the description now says to omit `employee_id` for the whole company, and two

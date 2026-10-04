@@ -85,7 +85,7 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
   employer-side US taxes, FUTA and SUTA are reported as unavailable because the
   data does not hold them. Not built: PT and LWF due dates, US due dates, TDS slab
   maths, the ESI/PT recomputation, Form 16 and Form 24Q generation (REST-only), and
-  deposit tracking (AgentSwitch has none, so "overdue" only means the date passed).
+  deposit tracking (AgentSwitch has none, so `past_due_date` only means the date passed).
   Design: `docs/superpowers/specs/2026-10-04-statutory-and-lifecycle-reads-design.md`.
 
 ## F. Lifecycle and exceptions
