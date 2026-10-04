@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Awaitable, Callable
 
-from . import cost_report, scan_checks
+from . import cost_report, guarded, scan_checks
 from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -241,6 +241,70 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
 
 
 
+def _named_for(problem: dict[str, Any], name: str) -> dict[str, Any]:
+    """The shared fetch helper words a short fetch as the scan's; name the calling capability instead."""
+    return {**problem, "tool": name} if problem.get("code") == "scan_incomplete" else problem
+
+
+async def _find_record(ctx: RunContext, action: guarded.Action, reference: str,
+                       jurisdiction: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """The one record whose number or id is ``reference``, or an error result. The list tools
+    have no number filter, so the entity is listed and matched here."""
+    rows, problem = await _fetch_all(ctx, f"{action.entity}.list", {}, jurisdiction)
+    if problem:
+        return None, _named_for(problem, action.name)
+    hits = [row for row in rows if reference in (row.get("number"), row.get("id"))]
+    if len(hits) == 1:
+        return hits[0], None
+    return None, {"error": True, "tool": action.tool, "record": None,
+                  "code": "ambiguous_reference" if hits else "record_not_found",
+                  "message": f"{len(hits)} {action.entity} records match {reference!r}; nothing was changed"}
+
+
+def _refused(action: guarded.Action, refusal: dict[str, str], record: dict[str, Any]) -> dict[str, Any]:
+    return {"error": True, "tool": action.tool, "code": refusal["code"],
+            "message": f"{refusal['message']}; nothing was changed", "record": guarded.summary(record)}
+
+
+async def _run_guarded(ctx: RunContext, task: TaskSpec, action: guarded.Action) -> dict[str, Any]:
+    """Find, re-read, check, call once, re-read, verify. The action tool is reached only after
+    every check passes; a refusal is a result the answer step reports as "not performed"."""
+    jurisdiction, reference = task.input["jurisdiction"], task.input["reference"]
+    found, error = await _find_record(ctx, action, reference, jurisdiction)
+    if error:
+        return error
+    # The rows are shared and may have changed since the list: judge the fresh read.
+    before = await _call_tool(ctx, f"{action.entity}.get", {"id": found["id"]}, jurisdiction)
+    if before.get("error"):
+        return before
+    refusal = guarded.refusal_for(action, before)
+    if refusal is None and action.needs_calculated:
+        rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": before["id"]}, jurisdiction)
+        if problem:
+            return _named_for(problem, action.name)
+        if not scan_checks.is_calculated(rows):
+            refusal = {"code": "run_not_calculated", "message": f"{action.entity} {before.get('number')} "
+                                                                "has no calculated payslip rows"}
+    if refusal:
+        return _refused(action, refusal, before)
+    result = await _call_tool(ctx, action.tool, {"id": before["id"]}, jurisdiction)
+    if result.get("error"):
+        return result
+    after = await _call_tool(ctx, f"{action.entity}.get", {"id": before["id"]}, jurisdiction)
+    if after.get("error"):
+        return after
+    return guarded.outcome(action, before, after, result)
+
+
+def _guarded_worker(action: guarded.Action) -> Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]:
+    async def worker(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+        return await _run_guarded(ctx, task, action)
+    worker.__name__ = f"run_{action.name}"
+    return worker
+
+
+
+
 # run_payroll rewrites the slips of whichever run it reuses, and this seat cannot
 # undo that. Only a run still being prepared may be recalculated: draft (never
 # calculated) or review (calculated, not yet handed to an approver).
@@ -341,6 +405,11 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "answer_with_evidence": run_answer_with_evidence,
     "decline_request": run_decline_request,
 }
+
+
+_WORKERS.update({name: _guarded_worker(action) for name, action in guarded.ACTIONS.items()})
+
+
 
 
 def build_skills(ctx: RunContext) -> dict[str, Skill]:
