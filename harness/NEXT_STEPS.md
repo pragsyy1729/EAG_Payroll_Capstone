@@ -220,7 +220,33 @@ built/partial/todo status. Proposed order:
        (`ui/surface.py` `_find_answer`) does not recognise a decline node; a
        model that repeats "I can't do that:" doubles the prefix; "submit for
        approval" was not tried live (it would mutate the shared August run).
-5. [ ] B/E/F extras (dry-run calculate, payslips, statutory dues, FnF).
+5. [~] B/E/F extras. **6a and 6b built** (read-only; spec and plan in
+       `docs/superpowers/`): `statutory_dues` and `lifecycle_report`. **6c, the
+       guarded actions that change data (dry-run calculate, generate/send payslips,
+       submit a loan, revision or settlement for approval, calculate a settlement),
+       is not built.** This seat has no undo, so 6c can only be proven live through
+       its guards and refusals plus scripted dry runs.
+       **Result (India July, US August, loans, revisions; recomputed from raw rows):**
+       July dues EPF 93,405 + 93,405, ESI 1,999 + 8,662, PT 12,400, TDS 49,669, all
+       equal to the header totals; TDS due 2026-08-07, EPF and ESI 2026-08-15 (past, so
+       "overdue", but deposits are not tracked). US August withholdings: federal
+       29,650, state 6,794.79, Social Security 15,144.06 (6.13% of gross), Medicare
+       3,582.71 (1.45%), equal to the slip components and the header. Loans: all 102
+       loans and 194 repayments read (paging works past 100); only 2 loans carry
+       data problems (negative or zero EMI and tenure, a negative rate, a disbursement
+       date in year 0009, a negative repayment principal), so the junk is isolated, not
+       general. Revisions: 73 pending, 17 backdated, and 14 pending revisions whose
+       `approval_status` says approved or rejected (a status/approval conflict).
+       Live (NVIDIA planner, Groq answer): the India dues, US withholdings, loans
+       and revisions questions all answered with the report's numbers.
+       For the team to judge, possible AgentSwitch data-quality findings (candidate bug
+       reports): loans accepted with negative or zero EMI, tenure and rate and a year-0009
+       date; salary revisions in status `pending_approval` with a contradicting
+       `approval_status`. They may be class test data rather than platform bugs.
+       Found while testing: with the capability description unchanged, the planner
+       once fetched loans one employee at a time and concluded evidence was missing;
+       the description now says to omit `employee_id` for the whole company, and two
+       reruns made a single whole-company call.
 
 The existing 7 capabilities cover only A (partly) and B (run/submit). Most
 new work is read wrappers plus Python computation.

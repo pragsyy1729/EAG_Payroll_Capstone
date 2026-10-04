@@ -1,0 +1,19 @@
+{
+  "name": "scaffold_statutory_us",
+  "note": "Scaffold only. Find the US August 2026 run, report its statutory withholdings, answer. Read-only.",
+  "steps": [
+    {"reply": {"add": [{"id": "lookup", "capability": "list_payruns",
+                        "arguments": {"jurisdiction": "US", "month": "2026-08"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "find the US August 2026 run"}},
+    {"reply": {"add": [{"id": "dues", "capability": "statutory_dues",
+                        "arguments": {"jurisdiction": "US", "payrun_id": "d0477238-3c08-4d87-a378-fca1a4b0dfe8"},
+                        "depends_on": ["lookup"]}],
+               "cancel": [], "finish": false, "reason": "report the statutory withholdings"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "What statutory withholdings were in the US August 2026 payroll?"},
+                        "depends_on": ["dues"]}],
+               "cancel": [], "finish": false, "reason": "report finished; answer from it"}},
+    {"reply": {"ready": true, "missing": [], "reason": "the dues report is present"}},
+    {"reply": "Scripted answer: see the statutory_dues evidence."}
+  ]
+}
