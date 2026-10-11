@@ -69,8 +69,11 @@ def breakdown(row: dict[str, Any], run: dict[str, Any] | None = None) -> dict[st
     run = run or {}
     earnings, deductions = components(row.get("earnings")), components(row.get("deductions"))
     gross, total, net = finite(row.get("gross_pay")), finite(row.get("total_deductions")), finite(row.get("net_pay"))
-    reimbursements = finite(row.get("reimbursements")) or 0.0
+    raw_reimbursements = row.get("reimbursements")
+    reimbursements = finite(raw_reimbursements) or 0.0
     problems: list[str] = []
+    if raw_reimbursements is not None and finite(raw_reimbursements) is None:
+        problems.append("the reimbursements value is present but not a number")
     if earnings is None:
         problems.append("the earnings components are unreadable")
     if deductions is None:
@@ -99,7 +102,7 @@ def breakdown(row: dict[str, Any], run: dict[str, Any] | None = None) -> dict[st
 
 def _key(name: str) -> str:
     """One component, however it is spelled: "EPF (Employee)" and "EPF Employee" are the same deduction."""
-    return re.sub(r"[^a-z0-9]", "", name.lower())
+    return re.sub(r"[^a-z0-9]", "", name.lower()) or name.strip().lower()    # a name with no Latin letters or digits keeps itself
 
 
 def _keyed(items: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
@@ -203,8 +206,7 @@ def structure_view(*, employee: dict[str, Any], structure: dict[str, Any] | None
         view["ownership"] = "missing"
         problems.append("the profile points to no salary structure, or the structure record was not found")
     elif owner and owner != employee.get("id"):
-        view.update(ownership="other_employee", owner_employee_id=owner, structure_name=structure.get("name"),
-                    figures_withheld=True)
+        view.update(ownership="other_employee", owner_employee_id=owner, figures_withheld=True)
         problems.append("the structure on the profile belongs to another employee, so its figures are not "
                         "this employee's")
     else:
