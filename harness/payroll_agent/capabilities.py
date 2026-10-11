@@ -205,7 +205,9 @@ def default_registry() -> CapabilityRegistry:
         Capability(
             "list_employees",
             "Search employees by name or other text to resolve who a request refers to, "
-            "before looking up their payroll records. Returns matching Employee rows.",
+            "before looking up their payroll records. Returns matching Employee rows. A full name "
+            "such as `Meera More` works (every word must match); an empty result means no such "
+            "employee exists, so say that rather than guessing.",
             {"jurisdiction": _JURISDICTION,
              "search": string("Name or text to search for.", required=False, maximum=200),
              "limit": integer("Max rows to return.", required=False, default=10, minimum=1, maximum=100)},
@@ -379,7 +381,9 @@ def default_registry() -> CapabilityRegistry:
             "deductions with each component's share of CTC ONLY when the structure belongs to the employee or "
             "is a grade template. If `ownership` is `other_employee`, the structure on the profile belongs to "
             "someone else: say so, give no component figures, and report the profile CTC, the pay lines and "
-            "the revision findings instead. Report every item in `problems`.",
+            "the revision findings instead. Report every item in `problems`. The report is complete on its "
+            "own: no pay lines or no usable revisions is a finding to state, so do not fetch pay lines or "
+            "pay runs afterwards.",
             {"jurisdiction": _JURISDICTION,
              "employee_id": string("The employee.", maximum=200, format="id")},
             families=("evidence",),

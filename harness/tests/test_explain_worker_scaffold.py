@@ -132,3 +132,28 @@ def test_the_capabilities_are_registered_read_only_with_validated_arguments():
         registry.validate("reimbursement_status", {"jurisdiction": "IN", "status": "maybe"})
     with pytest.raises(CapabilityError):
         registry.validate("payslip_breakdown", {"jurisdiction": "IN", "employee_id": "E1"}, known_values={"other"})
+
+
+def test_the_structure_capability_description_says_missing_pay_lines_are_a_finding():
+    description = default_registry().get("salary_structure_view").description
+    assert "complete" in description and "do not fetch" in description.lower()
+
+
+def test_the_evidence_review_prompt_accepts_a_capabilitys_own_finding_as_ready_evidence():
+    """Found live: the critic called a complete salary-structure report 'not ready' because it reported that
+    the structure belongs to someone else and that no pay lines exist. Wording guard only; behaviour is
+    measured live and recorded in WORKFLOWS.md."""
+    from payroll_agent.planner import PayrollPlanner
+    prompt = PayrollPlanner._review_system()
+    assert "finding" in prompt and "complete" in prompt and "belongs to someone else" in prompt
+
+
+async def test_a_named_run_without_a_calculated_line_is_named_and_the_error_suggests_the_default():
+    """Found live: 'last month' resolved to the uncalculated September draft; the error must say which run
+    has no calculated line and that omitting the run ids compares the latest two."""
+    result = await call(workers.run_explain_pay_change, FakeAgentSwitch(tables()), employee_id="E1",
+                        from_payrun_id="RA", to_payrun_id="RZ")
+    assert result["code"] == "need_two_lines" and "RZ" in result["message"] and "omit" in result["message"]
+    assert "RA" not in result["message"].split("omit")[0]            # only the run that lacks a line is blamed
+    short = await call(workers.run_explain_pay_change, FakeAgentSwitch(tables(PayRunEmployee=[LINE_A])), employee_id="E1")
+    assert "only 1" in short["message"]

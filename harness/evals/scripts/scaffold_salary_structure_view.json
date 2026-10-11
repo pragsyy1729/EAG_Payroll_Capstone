@@ -1,0 +1,53 @@
+{
+  "name": "scaffold_salary_structure_view",
+  "note": "Scaffold only. Explain Meera More's salary structure. Read-only.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "node",
+            "capability": "salary_structure_view",
+            "arguments": {
+              "jurisdiction": "IN",
+              "employee_id": "441e6779-ef91-44d0-ba9d-4ffba7b38622"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "gather the evidence"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "Explain Meera More's salary structure."
+            },
+            "depends_on": [
+              "node"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "evidence is in; answer from it"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "the evidence is present"
+      }
+    },
+    {
+      "reply": "Scripted answer: see the salary_structure_view evidence."
+    }
+  ]
+}

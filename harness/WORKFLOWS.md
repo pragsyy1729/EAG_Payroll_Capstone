@@ -15,11 +15,11 @@ before relying on it. Status: **built** (live-verified), **partial**, **todo**.
 
 | Query | Tools | Status |
 |---|---|---|
-| Why is my net pay lower than last month? (Ramesh flow) | `PayRunEmployee`, `SalarySlip`, `Attendance`, `LeaveApplication`, `EmployeeLoan` | partial: planner flow exists, never completed live |
-| What are all these deductions? Show my gross-to-net breakdown | `SalarySlip`, `PayRunEmployee`, `SalaryComponent` | todo |
-| Why did my TDS or PF change? | `SalarySlip`, `TaxConfig`, `EPFConfig`, `InvestmentDeclaration` | todo |
-| How is my Basic/HRA/Special Allowance split calculated? ("Explain Meera More's salary structure") | `SalaryStructure`, `SalaryTemplate`, `SalaryComponent` | todo; reference case below |
-| Where is my reimbursement? Why partly approved? | `ReimbursementClaim` | todo |
+| Why is my net pay lower than last month? (Ramesh flow) | `PayRunEmployee`, `SalarySlip`, `Attendance`, `LeaveApplication`, `EmployeeLoan` | built: completed live (2026-10-11); the answer found the overtime drop and the EPF change, but its arithmetic was muddled (the planner used the older tools, not `explain_pay_change`); see the notes below this table |
+| What are all these deductions? Show my gross-to-net breakdown | `SalarySlip`, `PayRunEmployee`, `SalaryComponent` | built (`payslip_breakdown`): live answer for Ramesh, August 2026; 727 of 727 live calculated lines pass all three accounting checks |
+| Why did my TDS or PF change? | `SalarySlip`, `TaxConfig`, `EPFConfig`, `InvestmentDeclaration` | built (`explain_pay_change`): component changes and the facts that moved (days, LOP, PF wage, regime, taxable earnings, TDS); facts only, no invented cause; live answers are correct when the planner completes (about 1 run in 3 did on the last measurement) |
+| How is my Basic/HRA/Special Allowance split calculated? ("Explain Meera More's salary structure") | `SalaryStructure`, `SalaryTemplate`, `SalaryComponent` | built (`salary_structure_view`): the Meera More reference case below now answers correctly (4 of 4 runs after the fixes, 0 of 4 before) |
+| Where is my reimbursement? Why partly approved? | `ReimbursementClaim` | built (`reimbursement_status`): live, 101 claims, 48 flagged for data problems; the reason for a partial approval is not in the data and the answer says so |
 
 **Reference case: "Explain Meera More's salary structure" (checked on the live India tenant).**
 The correct answer is that she has no usable structure, not a component breakdown.
@@ -34,13 +34,30 @@ The correct answer is that she has no usable structure, not a component breakdow
 - Other problems on the same record: designation HR Manager on an intern; exit date
   2026-04-10 with reason "death" while status is suspended; probation end before the joining
   date; city and state that disagree; a work location whose own city and state differ.
-- Rule for the capability, when built: show structure figures only if the structure's
+- Rule implemented in `salary_structure_view`: show structure figures only if the structure's
   `employee_id` matches the employee or the structure is a grade template, otherwise say
   what is missing. A harness answer that followed this rule was better than a first answer
   that tabulated the other employee's components and computed a net pay she was never paid.
 - Candidate AgentSwitch issues, not filed: the profile pointing at another employee's
   structure, and revision `REV-2026-00047` with status pending approval but approval
   status rejected.
+
+**Notes from building these (live, India, 2026-10-11).**
+
+- Employee search matched one word only: "Meera More" found nobody while "Meera" found five, so any full-name
+  question ended in a false "not found" or a stall. `list_employees` now searches by the first word and keeps rows
+  containing every word.
+- The planner's evidence review called the complete Meera report "not ready" because it reported findings
+  (a structure that belongs to someone else, no pay lines). The review prompt now says a capability's own finding
+  is ready evidence, and the report states that it is complete.
+- Comparing July and August showed "EPF (Employee)" falling and "EPF Employee" rising: the same deduction under
+  two spellings. Components are now matched by a normalised name (the result says `renamed_from`).
+- Reimbursements: 40 draft claims carry approved amounts far above the claim (RC-2026-00100 claims 80,855.61 with
+  1,162,279.12 approved), 7 paid claims have no pay run recorded, and RC-2026-00019 is partially approved with no
+  approved amount. These are candidate AgentSwitch data problems for the team to judge, none filed. Approved totals
+  are shown only for approved, partially approved and paid claims.
+- Planner reliability is the limit: the pay-change question completed in about 1 of 3 runs because of malformed
+  planner output (template placeholders in arguments, bad patch JSON). The tools return correct results when called.
 
 ## B. Run lifecycle (admin actions, guarded)
 

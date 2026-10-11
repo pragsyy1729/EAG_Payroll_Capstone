@@ -346,6 +346,9 @@ new work is read wrappers plus Python computation.
 - [x] What-if salary estimator (`salary_whatif`, India, read-only): checked against 492
       live full-month pay lines with 0 differences. Not done: US, TDS beyond a
       proportional estimate, CTC input, multi-employee scenarios.
+- [x] Employee "why" answers (`payslip_breakdown`, `explain_pay_change`, `salary_structure_view`,
+      `reimbursement_status`), plus two fixes found live: full-name employee search, and component-name
+      matching across runs. Open: planner completes the pay-change question about 1 time in 3.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
