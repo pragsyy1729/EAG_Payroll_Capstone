@@ -434,12 +434,14 @@ async def run_offcycle_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]
         return _with_tool(problem, "offcycle_report")
     fundings: dict[str, dict[str, Any]] = {}
     for run in offcycle.select_runs(runs):
+        if not run.get("id"):
+            continue
         try:
             controls = await ctx.agentswitch.rest(
                 "GET", f"/api/payroll/off-cycle/runs/{run['id']}/controls", jurisdiction=jurisdiction)
             fundings[run["id"]] = offcycle.funding(controls)
-        except AgentSwitchError as problem:
-            fundings[run["id"]] = {"unavailable": str(problem)[:200]}
+        except Exception as problem:  # one run's failed read must not fail the report
+            fundings[run["id"]] = {"unavailable": f"{type(problem).__name__}: {problem}"[:200]}
     return offcycle.build_report(runs, fundings, _today())
 
 
@@ -448,8 +450,7 @@ async def run_create_off_cycle_run(ctx: RunContext, task: TaskSpec) -> dict[str,
     is a result. Once the tool has been called, a failure to confirm is reported as possibly changed."""
     jurisdiction = task.input["jurisdiction"]
     args = {key: value for key, value in task.input.items() if key != "jurisdiction"}
-    key = f"{args.get('run_type')}:{args.get('pay_period_start')}:{args.get('pay_period_end')}"
-    async with _lock_for(jurisdiction, "PayRun.create", key):
+    async with _lock_for(jurisdiction, "PayRun.create", offcycle.period_key(args)):
         runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
         if problem:
             return _with_tool(problem, "create_off_cycle_run")

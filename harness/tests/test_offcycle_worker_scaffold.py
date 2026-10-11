@@ -171,3 +171,40 @@ def test_the_capabilities_are_registered_with_the_right_authority():
     assert registry.get("create_off_cycle_run").side_effect is True
     only_jurisdiction = registry.validate("create_off_cycle_run", {"jurisdiction": "IN"})
     assert only_jurisdiction == {"jurisdiction": "IN"}      # a missing field becomes a refusal result, not an error
+
+
+@pytest.mark.parametrize("second_start,second_end", [("2026-10-01T00:00:00", "2026-10-31"),
+                                                    ("2026-10-01", "2026-10-31T23:59:59")])
+async def test_two_requests_for_one_period_in_different_date_forms_create_one_run(second_start, second_end):
+    """Review finding: the lock key used the raw strings, so another date form got another lock."""
+    fake = FakeAgentSwitch([run("REG", pay_date="2026-09-30")])
+    results = await asyncio.gather(create(fake), create(fake, pay_period_start=second_start,
+                                                        pay_period_end=second_end))
+    assert sum(1 for r in results if r.get("performed")) == 1
+    assert tools(fake).count("PayRun.create") == 1
+
+
+async def test_a_controls_failure_of_any_kind_leaves_only_that_run_unavailable():
+    """Review finding: only AgentSwitchError was caught, so a timeout or bad reply failed the whole report."""
+    import httpx
+    other = run("PRUN-2", id="id-2", run_type="off_cycle", status="review")
+    third = run("PRUN-3", id="id-3", run_type="correction", status="review")
+    fake = FakeAgentSwitch([BONUS, other, third], controls={BONUS["id"]: CONTROLS, "id-3": ["not", "a", "dict"]})
+    original = fake.rest
+
+    async def rest(method, path, *, jurisdiction, **kw):
+        if "id-2" in path:
+            raise httpx.ReadTimeout("slow")
+        return await original(method, path, jurisdiction=jurisdiction, **kw)
+    fake.rest = rest
+    by_number = {r["number"]: r["funding"] for r in (await report(fake))["runs"]}
+    assert by_number["PRUN-2"]["unavailable"] and by_number["PRUN-3"]["unavailable"]
+    assert by_number["PRUN-2026-00014"]["verdict"] == "no_source"
+
+
+async def test_a_run_with_no_id_is_reported_without_a_controls_read_or_a_crash():
+    nameless = run("PRUN-X", run_type="bonus", status="draft")
+    nameless.pop("id")
+    fake = FakeAgentSwitch([nameless])
+    result = await report(fake)
+    assert result["runs"][0]["funding"] == {"unavailable": "run has no id"} and fake.rest_calls == []

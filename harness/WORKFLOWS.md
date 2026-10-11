@@ -189,6 +189,13 @@ fake client; no run has been created on any tenant. The real planner, asked to c
 run without authority, declined once in three tries; the other two ended with no answer
 (a malformed decline patch), the known planner flakiness. Nothing was written in any of
 them. Not built: adding employees, funding verification and rescheduling.
+Limits worth knowing: the company and bank account are copied from the most recent
+non-cancelled run that has both. On the live tenants that is almost a single run (India:
+1 of 15 runs has a bank account, and it is not a regular run; US: 0 of 2, so a US create
+always refuses with `no_template_run`). If a later run carries a different account it
+silently becomes the template, and the run lands on that account. A write is never
+re-sent by the transport after a 502 or 503 (the change may already have happened), and
+the in-process lock does not cover two separate agent processes.
 Design: `docs/superpowers/specs/2026-10-11-off-cycle-runs-design.md`.
 
 ## Scope limits (from the tool catalogue)
