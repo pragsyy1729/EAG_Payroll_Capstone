@@ -22,6 +22,7 @@ exactly the kind of mistake that stays invisible until an audit.
 """
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Collection
 from dataclasses import dataclass, field
@@ -160,6 +161,13 @@ class CapabilityRegistry:
             elif spec.kind == "integer":
                 if isinstance(value, bool) or not isinstance(value, int):
                     raise CapabilityError(f"{name}.{key} must be an integer")
+                if spec.minimum is not None and value < spec.minimum:
+                    raise CapabilityError(f"{name}.{key} must be >= {spec.minimum}")
+                if spec.maximum is not None and value > spec.maximum:
+                    raise CapabilityError(f"{name}.{key} must be <= {spec.maximum}")
+            elif spec.kind == "number":
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise CapabilityError(f"{name}.{key} must be a finite number")
                 if spec.minimum is not None and value < spec.minimum:
                     raise CapabilityError(f"{name}.{key} must be >= {spec.minimum}")
                 if spec.maximum is not None and value > spec.maximum:
