@@ -345,6 +345,58 @@ def default_registry() -> CapabilityRegistry:
             side_effect=True,
         ),
         Capability(
+            "payslip_breakdown",
+            "Break one employee's pay line down from gross to net, read-only: each earning and each deduction "
+            "by component, reimbursements, and net pay, with three checks (earnings add up to gross, deductions "
+            "add up to the total, net = gross - deductions + reimbursements). A failed check is reported as a "
+            "problem: say so, do not smooth it over. Omit `payrun_id` for the latest calculated regular run. "
+            "Use an `employee_id` taken from an earlier outcome (for example `list_employees`).",
+            {"jurisdiction": _JURISDICTION,
+             "employee_id": string("The employee.", maximum=200, format="id"),
+             "payrun_id": string("A specific PayRun, taken from an earlier outcome.", required=False,
+                                 maximum=200, format="id")},
+            families=("evidence",),
+        ),
+        Capability(
+            "explain_pay_change",
+            "Compare two of one employee's pay lines, read-only, for questions like why net pay, TDS or PF "
+            "changed: the change per earning and deduction component, the largest movers, and the facts that "
+            "can move pay (days payable, LOP days, PF wage, tax regime, taxable earnings, TDS, loans, "
+            "overtime, reimbursements) with those that differ listed in `drivers_changed`. It gives facts and "
+            "differences only; explain the change from those fields and say when the data does not show a "
+            "cause. Omit both run ids for the latest two calculated regular runs.",
+            {"jurisdiction": _JURISDICTION,
+             "employee_id": string("The employee.", maximum=200, format="id"),
+             "from_payrun_id": string("The earlier PayRun to compare from.", required=False, maximum=200,
+                                      format="id"),
+             "to_payrun_id": string("The later PayRun to compare to.", required=False, maximum=200,
+                                    format="id")},
+            families=("evidence",),
+        ),
+        Capability(
+            "salary_structure_view",
+            "Explain one employee's salary structure, read-only. It shows Basic, HRA, allowances and "
+            "deductions with each component's share of CTC ONLY when the structure belongs to the employee or "
+            "is a grade template. If `ownership` is `other_employee`, the structure on the profile belongs to "
+            "someone else: say so, give no component figures, and report the profile CTC, the pay lines and "
+            "the revision findings instead. Report every item in `problems`.",
+            {"jurisdiction": _JURISDICTION,
+             "employee_id": string("The employee.", maximum=200, format="id")},
+            families=("evidence",),
+        ),
+        Capability(
+            "reimbursement_status",
+            "Report reimbursement claims, read-only: counts and amounts by status, each claim's claimed and "
+            "approved amount and the pay run that paid it, and data problems (for example partially approved "
+            "with no approved amount). The reason a claim was rejected or partly approved is not in the data; "
+            "say so. Pass `employee_id` (from an earlier outcome) for one employee, `status` to narrow.",
+            {"jurisdiction": _JURISDICTION,
+             "employee_id": string("Limit to this employee.", required=False, maximum=200, format="id"),
+             "status": string("Limit to this status.", required=False,
+                              choices=("draft", "submitted", "approved", "partially_approved", "rejected", "paid"))},
+            families=("evidence",),
+        ),
+        Capability(
             "salary_whatif",
             "Estimate what one India employee's pay would be if their salary changed, without changing "
             "anything. Give exactly one of `percent_raise` (for example 10 for a 10% raise, negative for a "
