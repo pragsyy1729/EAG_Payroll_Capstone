@@ -370,7 +370,12 @@ new work is read wrappers plus Python computation.
 - [ ] Extend capabilities beyond the 7-capability MVP, ideally derived from
       AgentSwitch's scoped `tools/list` schemas.
 - [ ] Keystone (US) live verification of the MVP flows.
-- [ ] `PayRun.create` with `run_type=off_cycle` end to end.
+- [~] Off-cycle runs, partly done: `offcycle_report` (read-only) and `create_off_cycle_run`
+      (guarded, creates one empty draft run) are built and verified live on the India
+      tenant for the read and the refusals only; no run was ever created. Not done:
+      adding employee lines, `verify-funding` and `reschedule` (REST writes whose request
+      bodies are not in the OpenAPI spec) and `PayRun.recalculate_lines`. The allowed
+      create path is proven with a fake client only.
 - [x] Study a reference payroll product (integration guide Step 2). Done:
       `GAP_REPORT.md` is the result (six gaps vs. Rippling/Gusto/Keka/
       greytHR/Deel/Dayforce). Only its question-2 revision is still open.

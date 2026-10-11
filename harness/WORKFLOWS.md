@@ -163,6 +163,34 @@ Accuracy: run over every live full-month pay line, the calculator reproduces EPF
 professional tax and employer contribution on 492 of 492 lines.
 Design: `docs/superpowers/specs/2026-10-11-salary-whatif-design.md`.
 
+## I. Off-cycle, bonus and correction runs
+
+- Which off-cycle or bonus runs exist, and are any at risk? (read-only)
+- Create a bonus / off-cycle / correction run for these dates, for this reason. (guarded)
+
+Status: **partly built**. `offcycle_report` lists every non-regular run with its reason,
+status, approval deadline, the platform's `deadline_state`, employee count and the latest
+funding verdict (REST `GET .../off-cycle/runs/{id}/controls`). It works out in code whether
+a deadline has passed and flags a run whose platform state says `on_time` after the
+deadline. Live (India, 2026-10-11): one run, `PRUN-2026-00014`, bonus, draft, 0 employees,
+deadline 2026-09-26 passed, funding `no_source`, platform state `on_time`. The model's
+answer called it at risk (deadline passed, empty, unfunded) but did not repeat that the
+platform still says `on_time`; that is in the node result. The US tenant has no off-cycle
+runs, so its controls endpoint is untested.
+`create_off_cycle_run` (needs `--allow create_off_cycle_run`) creates one empty draft run.
+It refuses, before any write: a missing reason, a type other than off_cycle, bonus or
+correction, bad or past dates, a duplicate period, and a tenant with no run to copy the
+company and bank account from. It sends only nine allow-listed fields (never totals or
+status), re-reads the run to verify type and draft status, and reports a failure to
+confirm as "may have been created", never as unchanged. The new run has no employees.
+Verified live for refusals only (no reason; a regular run type): both refused, only
+`PayRun.list` was called, the PayRun total stayed at 15. The allowed path is proven with a
+fake client; no run has been created on any tenant. The real planner, asked to create a
+run without authority, declined once in three tries; the other two ended with no answer
+(a malformed decline patch), the known planner flakiness. Nothing was written in any of
+them. Not built: adding employees, funding verification and rescheduling.
+Design: `docs/superpowers/specs/2026-10-11-off-cycle-runs-design.md`.
+
 ## Scope limits (from the tool catalogue)
 
 - No approve or reject tools for PayRun, EmployeeLoan, SalaryRevision,
