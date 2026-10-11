@@ -27,12 +27,24 @@ def _day(value: Any) -> date | None:
 
 def funding(controls: dict[str, Any] | None) -> dict[str, Any]:
     """The latest funding_check event of a run's controls, or {"none_recorded": True}."""
+    if controls is not None and not isinstance(controls, dict):
+        return {"unavailable": "the controls reply was not readable"}
     events = [event for event in (controls or {}).get("events") or []
               if isinstance(event, dict) and event.get("event_type") == "funding_check"]
     if not events:
         return {"none_recorded": True}
     _, latest = max(enumerate(events), key=lambda pair: (str(pair[1].get("created_at") or ""), pair[0]))
     return {key: latest.get(key) for key in _FUNDING_FIELDS}
+
+
+def period_key(args: dict[str, Any]) -> str:
+    """One key for one period however its dates were written: two spellings of the same period must
+    share a lock. A value that does not parse keeps its raw text (the refusal rules reject it anyway)."""
+    parts = [str(args.get("run_type") or "").strip().lower()]
+    for name in ("pay_period_start", "pay_period_end"):
+        day = _day(args.get(name))
+        parts.append(day.isoformat() if day else str(args.get(name)))
+    return ":".join(parts)
 
 
 def select_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -58,7 +70,8 @@ def summarize(run: dict[str, Any], run_funding: dict[str, Any], today: date) -> 
 
 def build_report(runs: list[dict[str, Any]], fundings: dict[str, dict[str, Any]], today: date) -> dict[str, Any]:
     everything = [run for run in runs if run.get("run_type") not in (None, "regular")]
-    rows = [summarize(run, fundings.get(run.get("id"), {"none_recorded": True}), today)
+    rows = [summarize(run, fundings.get(run.get("id"), {"none_recorded": True}) if run.get("id")
+                      else {"unavailable": "run has no id"}, today)
             for run in select_runs(runs)]
     return {"today": today.isoformat(), "total": len(everything), "shown": len(rows),
             "truncated": len(everything) > len(rows), "runs": rows,
