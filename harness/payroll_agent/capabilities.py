@@ -327,7 +327,11 @@ def default_registry() -> CapabilityRegistry:
             "following month, labelled as not from AgentSwitch) and the config rates. US: the employee "
             "withholdings (federal and state income tax, Social Security, Medicare); employer-side US taxes "
             "are reported as unavailable. Read-only; it says that deposits are not tracked, and if the run "
-            "is not calculated it says so and reports nothing else. Use a `payrun_id` taken from an earlier "
+            "is not calculated it says so and reports nothing else. It also lists the return calendar (India "
+            "Form 24Q and Form 16; US Form 941, Form 940 and W-2), each labelled as not from AgentSwitch, and "
+            "the professional-tax and LWF cycle and state with no date asserted: present the calendar as the "
+            "standard calendar, not from AgentSwitch, and never state a date for professional tax, LWF or US "
+            "tax deposits. Use a `payrun_id` taken from an earlier "
             "outcome (for example `list_payruns`).",
             {"jurisdiction": _JURISDICTION,
              "payrun_id": string("The PayRun to report on.", maximum=200, format="id")},
