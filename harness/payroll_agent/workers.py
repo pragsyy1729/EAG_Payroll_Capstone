@@ -478,7 +478,8 @@ async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str,
         "run_exists_not_recalculable), say plainly that the action was NOT performed and why, and "
         "name the existing record -- never describe a refused action as done. If the error says the change may "
         "have happened (outcome_unverified or unexpected_status), say exactly that and tell the user to check "
-        "the record; do not say it was not performed."
+        "the record; do not say it was not performed. If a result is marked estimate: true, call the "
+        "figures an estimate, say nothing was changed, and state the assumptions it lists."
     )
     request = _answer_request()
     reply = await ctx.llm(prompt, system, **({"request": request} if request else {}))

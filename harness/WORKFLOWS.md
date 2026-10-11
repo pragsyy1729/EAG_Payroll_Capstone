@@ -122,6 +122,26 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
 | Run payroll for a month with no attendance data | missing evidence; must say what is missing | todo |
 | Generate a bank file or disburse | no disbursement tool | todo |
 
+## H. What-if estimates (read-only)
+
+- What would Ramesh's net pay be after a 10% raise? (also: a cut, or a new monthly gross)
+
+Status: **built (India only)**. `salary_whatif` reads the employee's latest full-month pay
+line (`PayRunEmployee`), scales every earning by the same factor, and recomputes employee
+and employer EPF, ESI and professional tax from `EPFConfig`, `ESIConfig` and `PTConfig`.
+TDS is scaled in proportion to gross and is a rough estimate (`TaxConfig` holds no slabs).
+The result is labelled `estimate: true, written: false` and lists its assumptions; nothing
+is written. Exactly one of `percent_raise` or `new_monthly_gross` is accepted; there is no
+CTC input, because CTC does not map to the pay components by a simple sum. No full-month
+line means no basis, and the US tenant is refused (no readable statutory configuration).
+Live answer (Ramesh Barve, 10% raise): gross 26,000 to 28,600; EPF 1,560 to 1,716;
+professional tax 200; net 24,240 to 26,684; employer cost 27,690 to 30,459. The model
+answer called it an estimate and said nothing was changed; it did not always list the
+assumptions (the node result has them).
+Accuracy: run over every live full-month pay line, the calculator reproduces EPF, ESI,
+professional tax and employer contribution on 492 of 492 lines.
+Design: `docs/superpowers/specs/2026-10-11-salary-whatif-design.md`.
+
 ## Scope limits (from the tool catalogue)
 
 - No approve or reject tools for PayRun, EmployeeLoan, SalaryRevision,
