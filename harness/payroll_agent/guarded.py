@@ -55,6 +55,7 @@ class Action:
     description: str
     guard: Guard | None = None
     needs_calculated: bool = False
+    id_argument: str = "id"        # the tool's own name for the record id: PayRun.recalculate_lines wants payrun_id
 
     def capability_description(self) -> str:
         return self.description + _SUFFIX.format(example=self.example)
@@ -66,6 +67,11 @@ ACTIONS: dict[str, Action] = {action.name: action for action in (
            "run by month, use run_payroll instead."),
     Action("generate_payslips", "PayRun", "PayRun.generate_payslips", _PAYSLIP_STATUSES, None, "PRUN-2026-00011",
            "Mark one calculated PayRun's payslips as generated and report what exists.", needs_calculated=True),
+    Action("recalculate_payrun", "PayRun", "PayRun.recalculate_lines", ("draft", "review"), None, "PRUN-2026-00013",
+           "Recalculate EVERY employee line of one calculated PayRun in draft or review (for example after an "
+           "attendance fix). It rewrites every line of the run, so use it only when the user asked to recalculate "
+           "that specific run. To open or calculate a run by month, use run_payroll instead.",
+           needs_calculated=True, id_argument="payrun_id"),
     Action("send_payslips", "PayRun", "PayRun.send_payslips", _PAYSLIP_STATUSES, None, "PRUN-2026-00011",
            "Report one calculated PayRun's payslip distribution list (the platform's send step; it does not "
            "email anyone).", needs_calculated=True),
@@ -161,6 +167,8 @@ def _reply_problem(reply: Any) -> str | None:
     for key in ("success", "ok"):
         if key in reply and not reply[key]:
             return f"it reported {key}: false"
+    if str(reply.get("status", "")).strip().lower() in ("failed", "error", "rejected"):
+        return f"it reported status {reply['status']!r}"
     return None
 
 
