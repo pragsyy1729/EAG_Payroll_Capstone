@@ -59,3 +59,19 @@ def test_a_day_that_could_not_be_counted_makes_the_verdict_unverified():
     assert result["verdict"] == "unverified" and result["unreadable_days"] == ["2026-09-10"]
     only_unreadable = {d: None for d in DAYS}
     assert evidence.assess(only_unreadable)["verdict"] == "unverified"
+
+
+def test_a_month_with_rows_only_at_the_end_is_partial_not_full():
+    """Review finding: only the tail was checked, so one row on the 30th gave 'full' for a month 1 day in 30 covered."""
+    only_last_day = evidence.assess(counts(DAYS, {"2026-09-30"}))
+    assert only_last_day["verdict"] == "partial" and only_last_day["first_date_with_rows"] == "2026-09-30"
+    assert evidence.assess(counts(DAYS, {"2026-09-28", "2026-09-29", "2026-09-30"}))["verdict"] == "partial"
+
+
+def test_the_start_of_the_window_gets_the_same_three_day_tolerance_as_the_end():
+    from_the_4th = evidence.assess(counts(DAYS, {d for d in DAYS if d >= "2026-09-04"}))      # a 3-day head gap
+    assert from_the_4th["verdict"] == "full" and from_the_4th["first_date_with_rows"] == "2026-09-04"
+    from_the_5th = evidence.assess(counts(DAYS, {d for d in DAYS if d >= "2026-09-05"}))      # 4 days: flagged
+    assert from_the_5th["verdict"] == "partial"
+    assert evidence.assess(counts(DAYS, set(DAYS)))["first_date_with_rows"] == "2026-09-01"
+    assert evidence.assess(counts(DAYS, set()))["first_date_with_rows"] is None

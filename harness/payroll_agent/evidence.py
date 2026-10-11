@@ -43,15 +43,17 @@ def assess(counts: dict[str, int | None]) -> dict[str, Any]:
     days = sorted(counts)
     unreadable = [d for d in days if counts[d] is None]
     with_rows = [d for d in days if (counts[d] or 0) > 0]
-    last = max(with_rows) if with_rows else None
+    first, last = (min(with_rows), max(with_rows)) if with_rows else (None, None)
     tail = (date.fromisoformat(days[-1]) - date.fromisoformat(last)).days if last else None
+    head = (date.fromisoformat(first) - date.fromisoformat(days[0])).days if first else None
     if unreadable:
         verdict = "unverified"
     elif not with_rows:
         verdict = "none"
-    elif tail > TAIL_TOLERANCE_DAYS:
-        verdict = "partial"
+    elif tail > TAIL_TOLERANCE_DAYS or head > TAIL_TOLERANCE_DAYS:
+        verdict = "partial"           # rows that start late or stop early cover only part of the window
     else:
         verdict = "full"
     return {"verdict": verdict, "period_days": len(days), "days_with_rows": len(with_rows),
-            "last_date_with_rows": last, "unreadable_days": unreadable, "window": [days[0], days[-1]]}
+            "first_date_with_rows": first, "last_date_with_rows": last, "unreadable_days": unreadable,
+            "window": [days[0], days[-1]]}

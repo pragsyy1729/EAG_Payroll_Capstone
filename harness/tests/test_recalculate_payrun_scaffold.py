@@ -103,3 +103,18 @@ async def test_a_plain_text_reply_is_reported_as_possibly_changed_not_as_done():
 async def test_an_unknown_run_reference_is_not_found():
     result = await recalc(FakeAgentSwitch([payrun("R1", "draft")], [slip("R1")]), "PRUN-NOPE")
     assert result["error"] is True and result["code"] == "record_not_found"
+
+
+@pytest.mark.parametrize("status", ["failed", "error", "rejected", "FAILED"])
+async def test_a_reply_that_says_it_failed_is_not_reported_as_performed(status):
+    """Review finding: recalculate_lines has never run live and its reply is {status, result}; a failed status
+    must not be reported as done."""
+    fake = FakeAgentSwitch([payrun("R1", "draft")], [slip("R1")], reply={"status": status, "result": {}})
+    result = await recalc(fake, "PRUN-R1")
+    assert result["code"] == "outcome_unverified" and result["may_have_changed"] is True and "performed" not in result
+
+
+@pytest.mark.parametrize("status", ["ok", "success", "recalculated", "completed"])
+async def test_an_ordinary_status_in_the_reply_is_still_performed(status):
+    fake = FakeAgentSwitch([payrun("R1", "draft")], [slip("R1")], reply={"status": status, "result": {"lines": 1}})
+    assert (await recalc(fake, "PRUN-R1"))["performed"] is True
