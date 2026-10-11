@@ -94,3 +94,10 @@ def test_build_report_is_unchanged_without_components_and_gains_them_when_asked(
     asked = cost_report.build_report(run=RUN, rows=ROWS, employees=[], group_by="none", with_components=True)
     assert asked["components"]["earnings_total"] == 70000.0
     assert {key: value for key, value in asked.items() if key != "components"} == base
+
+
+def test_a_cancelled_run_is_reported_with_a_caveat_and_a_normal_run_has_none():
+    """Found live: the planner presented the cancelled August 2025 run's cost as 'August last year'."""
+    cancelled = cost_report.build_report(run={**RUN, "status": "cancelled"}, rows=ROWS, employees=[], group_by="none")
+    assert cancelled["caveats"] == [{"what": "run", "reason": "this run is cancelled; its figures are not payroll that was paid"}]
+    assert "caveats" not in cost_report.build_report(run=RUN, rows=ROWS, employees=[], group_by="none")

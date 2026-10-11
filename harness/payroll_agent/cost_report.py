@@ -276,4 +276,6 @@ def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: 
               "variance": variance, "skipped": skipped}
     if with_components:
         result["components"] = component_totals(rows)
+    if run.get("status") == "cancelled":
+        result["caveats"] = [{"what": "run", "reason": "this run is cancelled; its figures are not payroll that was paid"}]
     return result

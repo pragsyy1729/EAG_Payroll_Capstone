@@ -246,7 +246,14 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
                 else:
                     compared_to, prev_rows, reason = await _comparison_rows(ctx, run, last_year["id"], jurisdiction)
             else:
-                compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
+                baseline = await _call_tool(ctx, "PayRun.get", {"id": compare_to}, jurisdiction) if compare_to else {}
+                if baseline and not baseline.get("error") and baseline.get("status") == "cancelled":
+                    reason = f"the comparison run {baseline.get('number') or compare_to} is cancelled, not payroll that was paid"
+                elif baseline and not baseline.get("error") and baseline.get("run_type") not in (None, "regular"):
+                    reason = (f"the comparison run {baseline.get('number') or compare_to} is not a regular run "
+                              f"({baseline.get('run_type')})")
+                else:
+                    compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
             if prev_rows is None:
                 compared_to = None
     return cost_report.build_report(run=run, rows=rows, employees=employees, group_by=group_by,
