@@ -17,8 +17,29 @@ relying on it. Status: **built** (live-verified), **partial**, **todo**.
 | Why is my net pay lower than last month? (Ramesh flow) | `PayRunEmployee`, `SalarySlip`, `Attendance`, `LeaveApplication`, `EmployeeLoan` | partial: planner flow exists, never completed live |
 | What are all these deductions? Show my gross-to-net breakdown | `SalarySlip`, `PayRunEmployee`, `SalaryComponent` | todo |
 | Why did my TDS or PF change? | `SalarySlip`, `TaxConfig`, `EPFConfig`, `InvestmentDeclaration` | todo |
-| How is my Basic/HRA/Special Allowance split calculated? | `SalaryStructure`, `SalaryTemplate`, `SalaryComponent` | todo |
+| How is my Basic/HRA/Special Allowance split calculated? ("Explain Meera More's salary structure") | `SalaryStructure`, `SalaryTemplate`, `SalaryComponent` | todo; reference case below |
 | Where is my reimbursement? Why partly approved? | `ReimbursementClaim` | todo |
+
+**Reference case: "Explain Meera More's salary structure" (checked on the live India tenant).**
+The correct answer is that she has no usable structure, not a component breakdown.
+
+- Her profile (`EMP-2026-00100`) has CTC 148,814.47 a year (12,401.21 a month) and a
+  `salary_structure_id` that points to a structure owned by another employee (Anita
+  Bhalerao, "Anita — revised 2026-10-01", 604,800 a year). Those Basic, HRA and Special
+  Allowance figures are Anita's and must not be reported as hers.
+- No structure has her `employee_id` (0 of 6), she has no pay lines (0 of 844) and no
+  salary slips, and her two revisions carry placeholder components ("C-Clamp 12133") that
+  match neither each other nor her CTC.
+- Other problems on the same record: designation HR Manager on an intern; exit date
+  2026-04-10 with reason "death" while status is suspended; probation end before the joining
+  date; city and state that disagree; a work location whose own city and state differ.
+- Rule for the capability, when built: show structure figures only if the structure's
+  `employee_id` matches the employee or the structure is a grade template, otherwise say
+  what is missing. A harness answer that followed this rule was better than a first answer
+  that tabulated the other employee's components and computed a net pay she was never paid.
+- Candidate AgentSwitch issues, not filed: the profile pointing at another employee's
+  structure, and revision `REV-2026-00047` with status pending approval but approval
+  status rejected.
 
 ## B. Run lifecycle (admin actions, guarded)
 
