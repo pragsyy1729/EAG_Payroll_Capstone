@@ -1,0 +1,53 @@
+{
+  "name": "scaffold_payroll_register",
+  "note": "Scaffold only. Show the July payroll register. Read-only.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "node",
+            "capability": "payroll_register",
+            "arguments": {
+              "jurisdiction": "IN",
+              "payrun_id": "dd9bf1ea-eab9-4f93-b91f-7b6721ce4d0b"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "gather the evidence"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "Show the July payroll register."
+            },
+            "depends_on": [
+              "node"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "evidence is in; answer from it"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "the evidence is present"
+      }
+    },
+    {
+      "reply": "Scripted answer: see the payroll_register evidence."
+    }
+  ]
+}

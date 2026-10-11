@@ -351,6 +351,8 @@ new work is read wrappers plus Python computation.
       matching across runs. Open: planner completes the pay-change question about 1 time in 3.
 - [x] `payroll_readiness` (attendance coverage, pending leave, proration, LOP mismatch, Basic share),
       a separate capability from `pre_payroll_scan`. LOP is read in one fetch and compared for every line, both directions.
+- [x] Reporting additions: `payroll_register`, `with_components`, `year_on_year`; a cancelled run is caveated
+      and refused as a comparison baseline. Year on year cannot be shown live until September 2026 is calculated.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
