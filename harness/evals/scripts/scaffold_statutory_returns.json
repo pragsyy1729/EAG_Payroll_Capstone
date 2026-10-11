@@ -1,0 +1,53 @@
+{
+  "name": "scaffold_statutory_returns",
+  "note": "Scaffold only. What statutory returns and dues are coming up for the August payroll? Read-only.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "node",
+            "capability": "statutory_dues",
+            "arguments": {
+              "jurisdiction": "IN",
+              "payrun_id": "39b67f17-c8f9-439e-a908-0953a8d35d5b"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "gather the evidence"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "What statutory returns and dues are coming up for the August payroll?"
+            },
+            "depends_on": [
+              "node"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "evidence is in; answer from it"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "the evidence is present"
+      }
+    },
+    {
+      "reply": "Scripted answer: see the statutory_dues evidence."
+    }
+  ]
+}

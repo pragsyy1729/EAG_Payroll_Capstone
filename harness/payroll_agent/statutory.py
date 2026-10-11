@@ -7,7 +7,7 @@ standard India due-date rules and the public US statutory rates used for a sanit
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from .cost_report import _finite as finite
@@ -16,6 +16,8 @@ from .scan_checks import is_calculated
 MONEY_TOLERANCE = 1.0
 MAX_PEOPLE = 25
 INDIA_BASIS = "standard India calendar, not from AgentSwitch"
+US_BASIS = ("standard US federal calendar, not from AgentSwitch; federal holidays are not applied and the "
+            "10-day extension for timely deposits is not applied")
 RATE_BASIS = "public statutory rate, not from AgentSwitch; observed as a percentage of gross pay"
 DEPOSIT_NOTE = "not tracked in AgentSwitch; whether these dues were paid is unknown"
 NOT_IN_DATA = "not in AgentSwitch data for this seat"
@@ -54,9 +56,9 @@ def _amount(value: Any, bad: list[int]) -> float:
     return amount
 
 
-def _entry(due: date, rule: str, today: date) -> dict[str, Any]:
+def _entry(due: date, rule: str, today: date, basis: str = INDIA_BASIS) -> dict[str, Any]:
     days = (due - today).days
-    return {"date": due.isoformat(), "rule": rule, "basis": INDIA_BASIS,
+    return {"date": due.isoformat(), "rule": rule, "basis": basis,
             "status": "past_due_date" if days < 0 else "due_today" if days == 0 else "upcoming", "days_left": days}
 
 
@@ -75,6 +77,82 @@ def due_dates(period_end: str | None, today: date) -> dict[str, dict[str, Any]]:
                 "esi": _entry(date(year, month, 15), "ESI: 15th of the following month", today)}
     except ValueError:
         return {}
+
+
+def _period_end(value: Any) -> date | None:
+    try:
+        end = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+    return end if 2000 <= end.year <= 2099 else None
+
+
+def _anchor(period_end: Any, pay_date: Any) -> tuple[date | None, str]:
+    """The date that decides the quarter and year: when the wages are paid (TDS and US payroll tax follow the
+    payment), else the period end, and the rule text says which."""
+    paid = _period_end(pay_date)
+    if paid is not None:
+        return paid, f"based on the pay date {paid.isoformat()}"
+    end = _period_end(period_end)
+    if end is None:
+        return None, ""
+    return end, f"based on the period end {end.isoformat()} (the run has no usable pay date)"
+
+
+def india_returns(period_end: str | None, today: date, pay_date: str | None = None) -> dict[str, dict[str, Any]]:
+    """Form 24Q for the quarter of the pay date (else the period end), and Form 16 for its financial year."""
+    end, basis_text = _anchor(period_end, pay_date)
+    if end is None:
+        return {}
+    if 4 <= end.month <= 6:
+        label, due = "Q1 (Apr-Jun)", date(end.year, 7, 31)
+    elif 7 <= end.month <= 9:
+        label, due = "Q2 (Jul-Sep)", date(end.year, 10, 31)
+    elif end.month >= 10:
+        label, due = "Q3 (Oct-Dec)", date(end.year + 1, 1, 31)
+    else:
+        label, due = "Q4 (Jan-Mar)", date(end.year, 5, 31)
+    fy_start = end.year if end.month >= 4 else end.year - 1
+    return {"form_24q": _entry(due, f"Form 24Q {label}: quarterly TDS return, {basis_text}", today),
+            "form_16": _entry(date(fy_start + 1, 6, 15),
+                              f"Form 16 for FY {fy_start}-{str(fy_start + 1)[2:]}: issue by 15 June after the "
+                              f"financial year, {basis_text}", today)}
+
+
+def _roll(due: date, rule: str) -> tuple[date, str]:
+    """A US due date on a weekend moves to the next Monday. Holidays are not applied."""
+    moved = due + timedelta(days=2 if due.weekday() == 5 else 1 if due.weekday() == 6 else 0)
+    if moved == due:
+        return due, rule
+    return moved, f"{rule} (moved from {due.strftime('%A')} {due.isoformat()})"
+
+
+def us_returns(period_end: str | None, today: date, pay_date: str | None = None) -> dict[str, dict[str, Any]]:
+    """Form 941 for the quarter of the pay date (else the period end), and Form 940 and W-2 for its calendar year."""
+    end, basis_text = _anchor(period_end, pay_date)
+    if end is None:
+        return {}
+    quarter = (end.month - 1) // 3
+    due_941 = (date(end.year, 4, 30), date(end.year, 7, 31), date(end.year, 10, 31), date(end.year + 1, 1, 31))[quarter]
+    january = date(end.year + 1, 1, 31)
+    out = {}
+    for key, due, rule in (("form_941", due_941, f"Form 941 Q{quarter + 1}: quarterly federal payroll tax return, {basis_text}"),
+                           ("form_940", january, f"Form 940 for {end.year}: annual FUTA return, {basis_text}"),
+                           ("form_w2", january, f"Form W-2 for {end.year}: to employees and the SSA, {basis_text}")):
+        moved, text = _roll(due, rule)
+        out[key] = _entry(moved, text, today, US_BASIS)
+    return out
+
+
+def state_schedules(configs: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """Cycle and state for professional tax and LWF from the tenant's config; no due date is asserted."""
+    out = {}
+    for key, name in (("professional_tax", "PTConfig"), ("lwf", "LWFConfig")):
+        row = (configs.get(name) or [None])[0]
+        if row:
+            out[key] = {"state": row.get("state"), "cycle": row.get("deduction_cycle"),
+                        "due": "state-specific; verify with the state portal (no date asserted)"}
+    return out
 
 
 def _india(rows: list[dict[str, Any]], run: dict[str, Any], dues: dict[str, Any],
@@ -201,12 +279,29 @@ def build_statutory(*, run: dict[str, Any], rows: list[dict[str, Any]], jurisdic
         if not config:
             skipped.append({"what": "config", "reason": "no India config rows found"})
         extra: dict[str, Any] = {"flags": {"esi_covered_above_ceiling": flag} if flag else {}, "config": config}
+        returns = india_returns(run.get("pay_period_end"), today, run.get("pay_date"))
+        extra["returns"], extra["state_schedules"] = returns, state_schedules(configs)
+        if not returns:
+            skipped.append({"what": "return calendar", "reason": "run has no usable pay period end"})
     else:
         statutes, consistency, other, sums, components = _us(rows, run, bad)
         biggest = sorted(components.items(), key=lambda item: (-abs(item[1]), item[0]))[:10]
         extra = {"rate_checks": _rate_checks(rows, sums, bad), "non_statutory_deductions": other,
                  "non_statutory_components": {name: round(amount, 2) for name, amount in biggest}}
+        returns = us_returns(run.get("pay_period_end"), today, run.get("pay_date"))
+        extra["returns"] = returns
+        extra["deposit_note"] = ("Federal tax deposits are due monthly (by the 15th of the following month) or "
+                                 "semiweekly, depending on the employer's deposit schedule, which is not in "
+                                 "AgentSwitch: verify the schedule; no deposit date is asserted.")
+        if not returns:
+            skipped.append({"what": "return calendar", "reason": "run has no usable pay period end"})
     if bad[0]:
         skipped.append({"what": "amounts", "reason": f"{bad[0]} unusable amount(s) counted as 0"})
     return {**head, "calculated": True, "statutes": statutes, "consistency": consistency, **extra,
-            "deposit_tracking": DEPOSIT_NOTE, "skipped": skipped}
+            "deposit_tracking": DEPOSIT_NOTE, "skipped": skipped,
+            "note": ("Dates are listed only where the rule is standard and certain: they are the unextended standard "
+                     "dates (each labelled as not from AgentSwitch, not adjusted for holidays or deposit-based "
+                     "extensions). Professional tax, LWF and US tax-deposit due dates are state or employer "
+                     "specific and are deliberately not asserted: the obligation exists, this tool cannot supply its "
+                     "date, and it must be taken from the state portal or the IRS deposit schedule. Saying so is the "
+                     "complete answer for those items, not missing evidence.")}
