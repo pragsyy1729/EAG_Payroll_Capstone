@@ -257,27 +257,23 @@ async def run_payroll_readiness(ctx: RunContext, task: TaskSpec) -> dict[str, An
     considered = {"attendance_coverage": len(days), "pending_leave": len(applications)}
     skipped: list[dict[str, str]] = []
     basic: dict[str, Any] = {}
-    candidates_skipped = 0
     if calculated:
         found += readiness.proration(rows, scoped, start, end)
         basic = readiness.basic_share(rows)
         considered["proration"] = len(rows)
-        candidates = [row for row in rows if (scan_checks._number(row.get("lop_days")) or 0) > 0]
-        candidates_skipped = max(0, len(candidates) - readiness.MAX_LOP_CANDIDATES)
-        considered["lop_mismatch"] = min(len(candidates), readiness.MAX_LOP_CANDIDATES)
-        for row in candidates[:readiness.MAX_LOP_CANDIDATES]:
-            lop_rows, problem = await _fetch_all(
-                ctx, "Attendance.list", {"employee_id": row.get("employee_id"), "is_lop": True}, jurisdiction)
-            if problem:
-                return _with_tool(problem, "payroll_readiness")
-            item = readiness.lop_mismatch(row, [r for r in lop_rows if r.get("employee_id") == row.get("employee_id")],
-                                          start, end)
-            if item:
-                found.append(item)
+        # One read of every LOP attendance row covers every line in both directions (LOP on the line that
+        # attendance does not show, and LOP attendance the line did not deduct); the list tool has no date range.
+        lop_rows, problem = await _fetch_all(ctx, "Attendance.list", {"is_lop": True}, jurisdiction)
+        if problem:
+            skipped.append({"check": "lop_mismatch", "reason": "the LOP attendance rows could not be read "
+                                                                f"completely ({problem.get('message')})"})
+        else:
+            found += readiness.lop_mismatches(rows, lop_rows, start, end)
+            considered["lop_mismatch"] = len(rows)
     else:
         skipped = [{"check": name, "reason": "run not calculated"} for name in ("proration", "lop_mismatch", "basic_share")]
     return readiness.assemble(run=run, calculated=calculated, findings=found, coverage=coverage, basic=basic,
-                              skipped=skipped, candidates_skipped=candidates_skipped, considered=considered)
+                              skipped=skipped, considered=considered)
 
 
 def _named_for_cost_report(problem: dict[str, Any]) -> dict[str, Any]:

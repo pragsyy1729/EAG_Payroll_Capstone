@@ -14,7 +14,6 @@ from typing import Any
 from .cost_report import _finite as finite
 
 MAX_DAYS = 45
-MAX_LOP_CANDIDATES = 25
 MAX_FINDINGS = 40
 BASIC_SHARE_MIN = 50.0
 TAIL_TOLERANCE_DAYS = 3        # a weekend plus a holiday at the end of the period is not missing data
@@ -49,35 +48,53 @@ def period_dates(start: Any, end: Any) -> list[str] | None:
     return [(first + timedelta(days=offset)).isoformat() for offset in range((last - first).days + 1)]
 
 
+def _baseline(rows: list[dict[str, Any]]) -> float | None:
+    """The period's working-day count: the value most lines share, trusted only when at least two lines agree
+    and they are more than half of the lines. The platform counts a joiner's working days from the joining
+    date (a 29 July joiner has 3 of 3), so a line cannot be judged against its own working_days, and the largest
+    value is no baseline either (one data error would become the baseline)."""
+    values = [w for w in (finite(row.get("working_days")) for row in rows) if w and w > 0]
+    if len(values) < 2:
+        return None
+    value, count = Counter(values).most_common(1)[0]
+    return value if count >= 2 and count > len(values) / 2 else None
+
+
 def proration(rows: list[dict[str, Any]], employees: dict[Any, dict[str, Any]], start: Any, end: Any) -> list[dict[str, Any]]:
     first, last = _day(start), _day(end)
     found: list[dict[str, Any]] = []
     if first is None or last is None:
         return found
-    # The platform counts a joiner's working days from the joining date (a July 29 joiner has 3 of 3), so a
-    # line is prorated when it has fewer days than the period's working days, not than its own.
-    period_working = max((w for w in (finite(row.get("working_days")) for row in rows) if w), default=None)
+    baseline = _baseline(rows)
+    unjudged = 0
     for row in rows:
         person = employees.get(row.get("employee_id"))
         days, working = finite(row.get("days_payable")), finite(row.get("working_days"))
-        if person is None or days is None or not working or working <= 0 or not period_working:
+        if person is None or days is None or not working or working <= 0:
             continue
-        prorated = days < period_working
         joined, left = _day(person.get("date_of_joining")), _day(person.get("exit_date"))
         joins_inside = joined is not None and first < joined <= last
         leaves_inside = left is not None and first <= left < last
-        evidence = {"days_payable": days, "working_days": working, "date_of_joining": person.get("date_of_joining"),
-                    "exit_date": person.get("exit_date")}
+        if baseline is None:
+            unjudged += joins_inside or leaves_inside
+            continue
+        prorated = days < baseline
+        evidence = {"days_payable": days, "working_days": working, "period_working_days": baseline,
+                    "date_of_joining": person.get("date_of_joining"), "exit_date": person.get("exit_date")}
         who = (row.get("employee_id"), _name(person, row))
         if joins_inside and not prorated:
             found.append(_finding("proration", "high", *who, f"Joined {joined.isoformat()} inside the period but "
-                                  f"paid {days:g} of the period's {period_working:g} working days (not prorated)", evidence))
+                                  f"paid {days:g} of the period's {baseline:g} working days (not prorated)", evidence))
         if leaves_inside and not prorated:
             found.append(_finding("proration", "high", *who, f"Exit date {left.isoformat()} is inside the period "
-                                  f"but paid {days:g} of the period's {period_working:g} working days (not prorated)", evidence))
+                                  f"but paid {days:g} of the period's {baseline:g} working days (not prorated)", evidence))
         if prorated and not (joins_inside or leaves_inside) and (finite(row.get("lop_days")) or 0.0) == 0:
-            found.append(_finding("proration", "info", *who, f"Paid {days:g} of the period's {period_working:g} working days with no joining or "
-                                  "exit date in the period and no LOP recorded", evidence))
+            found.append(_finding("proration", "info", *who, f"Paid {days:g} of the period's {baseline:g} working days "
+                                  "with no joining or exit date in the period and no LOP recorded", evidence))
+    if unjudged:
+        found.append(_finding("proration", "info", None, None,
+                              f"Proration of {unjudged} joiner(s) or leaver(s) in the period could not be judged: the "
+                              "run's pay lines do not share a clear working-day count", {"lines": len(rows)}))
     return found
 
 
@@ -138,6 +155,20 @@ def lop_mismatch(row: dict[str, Any], lop_rows: list[dict[str, Any]], start: Any
                     {"line_lop_days": line_lop, "attendance_lop_days": counted})
 
 
+def lop_mismatches(rows: list[dict[str, Any]], lop_rows: list[dict[str, Any]], start: Any, end: Any) -> list[dict[str, Any]]:
+    """Every pay line against the LOP attendance rows of its employee, in both directions: LOP days on the line
+    that attendance does not show, and LOP attendance that the line did not deduct."""
+    by_employee: dict[Any, list[dict[str, Any]]] = {}
+    for item in lop_rows:
+        by_employee.setdefault(item.get("employee_id"), []).append(item)
+    found = []
+    for row in rows:
+        finding = lop_mismatch(row, by_employee.get(row.get("employee_id"), []), start, end)
+        if finding:
+            found.append(finding)
+    return found
+
+
 def _basic_and_gross(row: dict[str, Any]) -> tuple[float, float] | None:
     raw = row.get("earnings")
     if isinstance(raw, str):
@@ -171,36 +202,40 @@ def basic_share(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 _UNITS = {"attendance_coverage": "calendar days", "pending_leave": "leave applications (pending or draft)",
-          "proration": "pay lines", "lop_mismatch": "pay lines with LOP days"}
+          "proration": "pay lines", "lop_mismatch": "pay lines"}
 _CHECK_LABELS = (("attendance_coverage", "attendance coverage", False), ("pending_leave", "pending leave", False),
                  ("proration", "proration", True), ("lop_mismatch", "LOP mismatch", True),
                  ("basic_share", "Basic share", True))
 
 
 def assemble(*, run: dict[str, Any], calculated: bool, findings: list[dict[str, Any]], coverage: dict[str, Any],
-             basic: dict[str, Any], skipped: list[dict[str, str]], candidates_skipped: int,
-             considered: dict[str, int] | None = None) -> dict[str, Any]:
+             basic: dict[str, Any], skipped: list[dict[str, str]], considered: dict[str, int] | None = None) -> dict[str, Any]:
     considered = considered or {}
     by_check = Counter(f["check"] for f in findings)
+    skipped_by = {item["check"]: item["reason"] for item in skipped}
     checks: dict[str, dict[str, Any]] = {}
-    for name, _, needs_lines in _CHECK_LABELS:
-        ran = calculated or not needs_lines
-        entry: dict[str, Any] = {"ran": ran}
-        if ran:
-            if name in considered:
-                entry["considered"], entry["unit"] = considered[name], _UNITS[name]
-            entry["findings"] = basic.get("below_50_percent", 0) if name == "basic_share" else by_check.get(name, 0)
+    not_run: list[str] = []
+    for name, label, needs_lines in _CHECK_LABELS:
+        if name in skipped_by or (needs_lines and not calculated):
+            reason = skipped_by.get(name, "run not calculated")
+            checks[name] = {"ran": False, "skipped_reason": reason}
+            not_run.append(f"{label} ({reason})")
+            continue
+        entry: dict[str, Any] = {"ran": True}
+        if name in considered:
+            entry["considered"], entry["unit"] = considered[name], _UNITS[name]
+        entry["findings"] = basic.get("below_50_percent", 0) if name == "basic_share" else by_check.get(name, 0)
         checks[name] = entry
     ran_names = [label for name, label, _ in _CHECK_LABELS if checks[name]["ran"]]
-    summary = (f"Checked {', '.join(ran_names)}"
-               + ("" if calculated else "; proration, LOP mismatch and Basic share were skipped (run not calculated)")
-               + f". {len(findings)} findings in total.")
+    flagged_basic = basic.get("below_50_percent", 0) if checks["basic_share"]["ran"] else 0
+    summary = (f"Checked {', '.join(ran_names)}" + (f"; skipped {', '.join(not_run)}" if not_run else "")
+               + f". {len(findings)} findings in the list"
+               + (f", plus {flagged_basic} lines with Basic below 50% (see basic_share)" if flagged_basic else "") + ".")
     ordered = sorted(findings, key=lambda f: (_SEVERITY_ORDER[f["severity"]], f.get("employee_name") or "", f["check"]))
     numbered = [{"id": f"F-{index:03d}", **item} for index, item in enumerate(ordered, 1)]
     return {"payrun_id": run.get("id"), "run_status": run.get("status"), "calculated": calculated,
             "period_start": run.get("pay_period_start"), "period_end": run.get("pay_period_end"),
             "attendance": coverage, "basic_share": basic, "skipped": skipped, "checks": checks, "summary": summary,
-            "lop_candidates_not_checked": candidates_skipped,
             "counts": {"by_severity": dict(Counter(f["severity"] for f in numbered)),
                        "by_check": dict(Counter(f["check"] for f in numbered)), "total": len(numbered)},
             "findings": numbered[:MAX_FINDINGS], "truncated": len(numbered) > MAX_FINDINGS}
