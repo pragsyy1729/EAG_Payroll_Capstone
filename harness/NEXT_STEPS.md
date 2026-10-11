@@ -346,6 +346,8 @@ new work is read wrappers plus Python computation.
 - [x] What-if salary estimator (`salary_whatif`, India, read-only): checked against 492
       live full-month pay lines with 0 differences. Not done: US, TDS beyond a
       proportional estimate, CTC input, multi-employee scenarios.
+- [x] Statutory additions: Form 24Q, Form 16, Form 941, 940 and W-2 calendar, and PT/LWF state and cycle with no
+      date asserted. Not done: Form 16 / Form 24Q generation (REST-only).
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.

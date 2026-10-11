@@ -266,12 +266,27 @@ def build_statutory(*, run: dict[str, Any], rows: list[dict[str, Any]], jurisdic
         if not config:
             skipped.append({"what": "config", "reason": "no India config rows found"})
         extra: dict[str, Any] = {"flags": {"esi_covered_above_ceiling": flag} if flag else {}, "config": config}
+        returns = india_returns(run.get("pay_period_end"), today)
+        extra["returns"], extra["state_schedules"] = returns, state_schedules(configs)
+        if not returns:
+            skipped.append({"what": "return calendar", "reason": "run has no usable pay period end"})
     else:
         statutes, consistency, other, sums, components = _us(rows, run, bad)
         biggest = sorted(components.items(), key=lambda item: (-abs(item[1]), item[0]))[:10]
         extra = {"rate_checks": _rate_checks(rows, sums, bad), "non_statutory_deductions": other,
                  "non_statutory_components": {name: round(amount, 2) for name, amount in biggest}}
+        returns = us_returns(run.get("pay_period_end"), today)
+        extra["returns"] = returns
+        extra["deposit_note"] = ("Federal tax deposits are due monthly (by the 15th of the following month) or "
+                                 "semiweekly, depending on the employer's deposit schedule, which is not in "
+                                 "AgentSwitch: verify the schedule; no deposit date is asserted.")
+        if not returns:
+            skipped.append({"what": "return calendar", "reason": "run has no usable pay period end"})
     if bad[0]:
         skipped.append({"what": "amounts", "reason": f"{bad[0]} unusable amount(s) counted as 0"})
     return {**head, "calculated": True, "statutes": statutes, "consistency": consistency, **extra,
-            "deposit_tracking": DEPOSIT_NOTE, "skipped": skipped}
+            "deposit_tracking": DEPOSIT_NOTE, "skipped": skipped,
+            "note": ("Dates are listed only where the rule is standard and certain (each labelled as not from "
+                     "AgentSwitch). Professional tax, LWF and US tax-deposit due dates are state or employer "
+                     "specific and are deliberately not asserted; saying so is the complete answer for those "
+                     "items, not missing evidence.")}
