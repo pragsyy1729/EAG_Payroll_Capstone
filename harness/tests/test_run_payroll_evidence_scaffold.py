@@ -97,3 +97,28 @@ async def test_a_named_run_without_a_usable_period_cannot_be_verified():
     fake = FakeAgentSwitch(target=target)
     result = await payroll(fake, payrun_id="T1")
     assert result["code"] == "cannot_verify_attendance" and "PayRun.run_payroll" not in names(fake)
+
+
+async def test_a_month_with_one_row_at_the_end_runs_but_is_reported_as_partial():
+    """Review finding: it used to be labelled 'full'."""
+    fake = FakeAgentSwitch(attendance_days={"2026-08-31"})
+    result = await payroll(fake)
+    assert result["id"] == "run-1" and result["attendance_check"]["verdict"] == "partial"
+    assert result["attendance_check"]["days_with_rows"] == 1 and result["attendance_check"]["first_date_with_rows"] == "2026-08-31"
+
+
+async def test_the_answer_prompt_tells_the_model_to_surface_a_partial_attendance_check():
+    """Review finding: a 'partial' warning on a successful run could be dropped by the answer step."""
+    from types import SimpleNamespace
+    seen: list[str] = []
+
+    async def llm(prompt, system, **kwargs):
+        seen.append(system)
+        return {"text": "t"}
+
+    nodes = {"n": {"skill": "run_payroll", "state": "succeeded", "input": {},
+                   "result": {"id": "r", "attendance_check": {"verdict": "partial"}}}}
+    store = SimpleNamespace(snapshot=lambda run_id: SimpleNamespace(nodes=nodes))
+    ctx = workers.RunContext(run_id="r", store=store, llm=llm, agentswitch=None, goal="q")
+    await workers.run_answer_with_evidence(ctx, TaskSpec("a", "answer_with_evidence", {"query": "q"}))
+    assert "attendance_check" in seen[0] and "partial" in seen[0]

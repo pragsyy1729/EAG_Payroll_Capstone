@@ -167,6 +167,8 @@ def _reply_problem(reply: Any) -> str | None:
     for key in ("success", "ok"):
         if key in reply and not reply[key]:
             return f"it reported {key}: false"
+    if str(reply.get("status", "")).strip().lower() in ("failed", "error", "rejected"):
+        return f"it reported status {reply['status']!r}"
     return None
 
 
