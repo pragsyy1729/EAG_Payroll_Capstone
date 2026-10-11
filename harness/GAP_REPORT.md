@@ -102,7 +102,7 @@ the guarded actions and `decline_request` (see `NEXT_STEPS.md`).
 | # | Feature | Status | In one line |
 |---|---|---|---|
 | 3 | Nightly Payroll Simulation & Risk Alerts | **Core implemented; scheduling and alert delivery remaining** | The checks exist and run on live data; the nightly trigger and the place to send alerts are not wired up, and the ID/bank checks are impossible for our role. |
-| 5 | Compensation Scenario Simulator | **Feasible as a labelled estimate; not yet built** | The platform cannot calculate hypotheticals, so we would read the real payslip and recompute the affected parts ourselves, read-only. |
+| 5 | Compensation Scenario Simulator | **Built as a labelled estimate (India, read-only)** | The platform cannot calculate hypotheticals, so the agent reads the real pay line and recomputes the affected parts itself. It reproduces all 492 live full-month lines; TDS stays a rough estimate. |
 | 6 | Fraud Prevention & Field Lockdowns | **Platform deficiency; the agent can only detect** | The enforcement tools are not on our tool list; the platform would need to provide the six things listed below. |
 
 ### Gap 3: Nightly Payroll Simulation & Risk Alerts
@@ -147,9 +147,17 @@ written.
 declared investments. `TaxConfig` holds no slabs, so the TDS effect can only be
 estimated from the employee's current TDS and must be labelled as an estimate.
 
-**How we would check accuracy.** Replay salary revisions that were already applied
-(status `applied`) and compare the predicted net pay with the actual payslip after the
-change.
+**How accuracy was checked.** Only 2 of 101 revisions are applied, and both take effect in
+October 2026, so there was no after-the-change payslip to compare with. Instead the
+calculator was run on every live full-month pay line (492) and its employee and employer
+EPF, ESI, professional tax and employer contribution compared with the platform's own
+figures: 0 differences after two calibrations (EDLI and admin are charged only on lines
+that show them; the platform's `employer_contribution` includes the ESI employer share).
+The estimate for a changed salary itself is not checked against a real after-change slip.
+
+**Built.** `salary_whatif` (India only; the US tenant exposes no readable EPF, ESI or
+professional-tax configuration). Accepts a percentage change or a new monthly gross; no CTC
+input. *Drafted by Claude, for the team to review.*
 
 **Platform ask (optional).** A dry-run flag on `calculate_payroll` that accepts
 overrides and writes nothing.
@@ -190,7 +198,7 @@ date in year 0009. These may be class test data rather than platform faults.
 
 - **3** is implemented at its core and needs only a trigger and an alert destination;
   two of its checks are impossible for our role.
-- **5** is feasible as a clearly labelled estimate, read-only.
+- **5** is built as a clearly labelled estimate, read-only, India only.
 - **6** is a platform deficiency; the agent can detect problems but not enforce
   approvals, locks or freezes. The platform asks are listed above.
 - **1** (automated compliance updates) is partly orchestration: watch configuration

@@ -92,3 +92,20 @@ def test_the_capability_is_registered_and_validates_its_arguments():
         except CapabilityError:
             continue
         raise AssertionError(f"{bad} should have been rejected")
+
+
+async def test_the_answer_prompt_tells_the_model_to_label_estimates():
+    """Found live: the planner chose the estimator correctly but the answer gave 26,684 with no mention of
+    'estimate' or its assumptions, because only the answer step's own prompt reaches that call."""
+    from types import SimpleNamespace
+    seen: list[str] = []
+
+    async def llm(prompt, system, **kwargs):
+        seen.append(system)
+        return {"text": "t"}
+
+    nodes = {"n1": {"skill": "salary_whatif", "state": "succeeded", "input": {}, "result": {"estimate": True}}}
+    store = SimpleNamespace(snapshot=lambda run_id: SimpleNamespace(nodes=nodes))
+    ctx = workers.RunContext(run_id="r", store=store, llm=llm, agentswitch=None, goal="q")
+    await workers.run_answer_with_evidence(ctx, TaskSpec("a", "answer_with_evidence", {"query": "q"}))
+    assert "estimate" in seen[0] and "assumptions" in seen[0]
