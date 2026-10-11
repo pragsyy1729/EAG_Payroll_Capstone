@@ -1,14 +1,15 @@
 # Payroll Agent: Workflows and Queries
 
-Date: 2026-09-30. The concrete questions the agent must answer, grouped by
+Date: 2026-09-30; updated 2026-10-11. The concrete questions the agent must answer, grouped by
 family, each matched to the AgentSwitch tools our seat (`team12`, India
 tenant) can reach. `REQUIREMENTS.md` is the topic-by-topic catalogue of
 payroll scenarios; this file is the question-by-question view used to decide
 what to build and what to evaluate.
 
 Tool availability comes from the 2026-09-29 `tools/list` snapshot (345
-tools, byte-identical on the US tenant). It goes stale: re-fetch before
-relying on it. Status: **built** (live-verified), **partial**, **todo**.
+tools, byte-identical on the US tenant). It goes stale: on 2026-10-11 the
+India seat listed 362 tools (the US tenant was not re-checked). Re-fetch
+before relying on it. Status: **built** (live-verified), **partial**, **todo**.
 
 ## A. Employee "why" questions (read-only, explain)
 
@@ -47,10 +48,10 @@ The correct answer is that she has no usable structure, not a component breakdow
 |---|---|---|
 | Run August payroll | `PayRun.run_payroll` | built: refuses when the month's run is not draft/review |
 | Calculate a draft run (draft to review) | `PayRun.calculate_payroll` | built (`calculate_payrun`); refusal verified live, execution only with a fake client |
-| Recalculate after an attendance fix | `PayRun.recalculate_lines` | todo |
+| Recalculate after an attendance fix | `PayRun.recalculate_lines` | todo (rewrites every line of a run; not built) |
 | Generate payslips; get the distribution list | `PayRun.generate_payslips`, `send_payslips` | built (`generate_payslips`, `send_payslips`; send only reports a list, it emails nobody); fake client only |
 | Submit this run for approval | `PayRun.submit_for_approval` | built |
-| Run an off-cycle or bonus payroll | `PayRun.create` (`run_type=off_cycle`) | todo, unverified |
+| Create an off-cycle or bonus pay run | `PayRun.create` (`run_type=off_cycle`, `bonus`, `correction`) | partial: `create_off_cycle_run` makes one empty draft run (refusals verified live, no run ever created, allowed path with a fake client only); adding employees is todo, see section I |
 | Cancel a draft run | `PayRun.cancel.draft.cancelled` | built (`cancel_draft_payrun`); refusal verified live |
 
 Every guarded action (sections B and F) changes shared data that this seat cannot undo, so each runs only with its
@@ -162,6 +163,41 @@ assumptions (the node result has them).
 Accuracy: run over every live full-month pay line, the calculator reproduces EPF, ESI,
 professional tax and employer contribution on 492 of 492 lines.
 Design: `docs/superpowers/specs/2026-10-11-salary-whatif-design.md`.
+
+## I. Off-cycle, bonus and correction runs
+
+- Which off-cycle or bonus runs exist, and are any at risk? (read-only)
+- Create a bonus / off-cycle / correction run for these dates, for this reason. (guarded)
+
+Status: **partly built**. `offcycle_report` lists every non-regular run with its reason,
+status, approval deadline, the platform's `deadline_state`, employee count and the latest
+funding verdict (REST `GET .../off-cycle/runs/{id}/controls`). It works out in code whether
+a deadline has passed and flags a run whose platform state says `on_time` after the
+deadline. Live (India, 2026-10-11): one run, `PRUN-2026-00014`, bonus, draft, 0 employees,
+deadline 2026-09-26 passed, funding `no_source`, platform state `on_time`. The model's
+answer called it at risk (deadline passed, empty, unfunded) but did not repeat that the
+platform still says `on_time`; that is in the node result. The US tenant has no off-cycle
+runs, so its controls endpoint is untested.
+`create_off_cycle_run` (needs `--allow create_off_cycle_run`) creates one empty draft run.
+It refuses, before any write: a missing reason, a type other than off_cycle, bonus or
+correction, bad or past dates, a duplicate period, and a tenant with no run to copy the
+company and bank account from. It sends only nine allow-listed fields (never totals or
+status), re-reads the run to verify type and draft status, and reports a failure to
+confirm as "may have been created", never as unchanged. The new run has no employees.
+Verified live for refusals only (no reason; a regular run type): both refused, only
+`PayRun.list` was called, the PayRun total stayed at 15. The allowed path is proven with a
+fake client; no run has been created on any tenant. The real planner, asked to create a
+run without authority, declined once in three tries; the other two ended with no answer
+(a malformed decline patch), the known planner flakiness. Nothing was written in any of
+them. Not built: adding employees, funding verification and rescheduling.
+Limits worth knowing: the company and bank account are copied from the most recent
+non-cancelled run that has both. On the live tenants that is almost a single run (India:
+1 of 15 runs has a bank account, and it is not a regular run; US: 0 of 2, so a US create
+always refuses with `no_template_run`). If a later run carries a different account it
+silently becomes the template, and the run lands on that account. A write is never
+re-sent by the transport after a 502 or 503 (the change may already have happened), and
+the in-process lock does not cover two separate agent processes.
+Design: `docs/superpowers/specs/2026-10-11-off-cycle-runs-design.md`.
 
 ## Scope limits (from the tool catalogue)
 

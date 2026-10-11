@@ -170,6 +170,12 @@ on our seat's tool list. Our seat can submit records for approval but has no app
 tool (the platform enforces that separation), and there is no field-level lock and no
 payout freeze.
 
+**One partial exception, found later.** Off-cycle runs do carry platform funding controls
+that our seat can read (`GET /api/payroll/off-cycle/runs/{id}/controls`, with a
+`funding_check` verdict such as `no_source`); the platform also exposes `verify-funding`
+and `reschedule` for them. This does not change the conclusion above about approvals,
+field locks and payout freezes. *Drafted by Claude, for the team to review.*
+
 **What the agent can do: detect and report.** Examples found on live data: 14 of 73
 pending salary revisions carry an `approval_status` of approved or rejected that
 contradicts their `pending_approval` status; 2 of 102 loans were accepted with a

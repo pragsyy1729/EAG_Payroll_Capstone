@@ -24,8 +24,8 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
-from . import cost_report, lifecycle, scan_checks, statutory, whatif
-from .agentswitch import AgentSwitchClient, AgentSwitchToolError
+from . import cost_report, lifecycle, offcycle, scan_checks, statutory, whatif
+from .agentswitch import AgentSwitchClient, AgentSwitchError, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
 TextLLM = Callable[[str, str], Awaitable[dict[str, Any]]]
@@ -422,6 +422,58 @@ async def run_salary_whatif(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
         return _whatif_error("estimate_unavailable", str(problem))
 
 
+def _today() -> date:
+    return date.today()
+
+
+async def run_offcycle_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: list the runs, read each off-cycle run's funding controls, let offcycle judge."""
+    jurisdiction = task.input["jurisdiction"]
+    runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "offcycle_report")
+    fundings: dict[str, dict[str, Any]] = {}
+    for run in offcycle.select_runs(runs):
+        if not run.get("id"):
+            continue
+        try:
+            controls = await ctx.agentswitch.rest(
+                "GET", f"/api/payroll/off-cycle/runs/{run['id']}/controls", jurisdiction=jurisdiction)
+            fundings[run["id"]] = offcycle.funding(controls)
+        except Exception as problem:  # one run's failed read must not fail the report
+            fundings[run["id"]] = {"unavailable": f"{type(problem).__name__}: {problem}"[:200]}
+    return offcycle.build_report(runs, fundings, _today())
+
+
+async def run_create_off_cycle_run(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Refuse, or create one empty run: fresh read, guards, one PayRun.create, re-read, verify. A refusal
+    is a result. Once the tool has been called, a failure to confirm is reported as possibly changed."""
+    jurisdiction = task.input["jurisdiction"]
+    args = {key: value for key, value in task.input.items() if key != "jurisdiction"}
+    async with _lock_for(jurisdiction, "PayRun.create", offcycle.period_key(args)):
+        runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
+        if problem:
+            return _with_tool(problem, "create_off_cycle_run")
+        refusal = offcycle.refusal_for_create(args, runs, _today())
+        if refusal:
+            return {"error": True, "tool": "PayRun.create", "code": refusal["code"],
+                    "message": f"{refusal['message']}; nothing was changed"}
+        payload = offcycle.create_payload(args, offcycle.template_run(runs))
+        try:
+            created = await _call_tool(ctx, "PayRun.create", payload, jurisdiction)
+            if created.get("error"):
+                return created
+            run_id = created.get("id")
+            if not run_id:
+                return offcycle.unverified("it returned no run id")
+            after = await _call_tool(ctx, "PayRun.get", {"id": run_id}, jurisdiction)
+        except Exception as problem:
+            return offcycle.unverified(f"{type(problem).__name__}: {problem}")
+        if after.get("error"):
+            return offcycle.unverified(f"the re-read failed ({after.get('message')})")
+        return offcycle.outcome(payload, after)
+
+
 def _refusal(existing: list[dict[str, Any]], message: str) -> dict[str, Any]:
     return {"error": True, "tool": "PayRun.run_payroll", "code": "run_exists_not_recalculable",
             "message": message, "existing": [_run_summary(run) for run in existing]}
@@ -517,6 +569,8 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "statutory_dues": run_statutory_dues,
     "lifecycle_report": run_lifecycle_report,
     "salary_whatif": run_salary_whatif,
+    "offcycle_report": run_offcycle_report,
+    "create_off_cycle_run": run_create_off_cycle_run,
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,

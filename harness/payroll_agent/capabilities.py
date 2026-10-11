@@ -315,6 +315,36 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "offcycle_report",
+            "List the off-cycle, bonus and correction pay runs, read-only: reason, status, pay date, approval "
+            "deadline, the platform's deadline state, employee count and the latest funding verdict. It works "
+            "out in code whether a deadline has passed and says when that disagrees with the platform's "
+            "`deadline_state`; report such a disagreement with both values. It also names empty runs (no "
+            "employees). Regular runs are not included (use `list_payruns`).",
+            {"jurisdiction": _JURISDICTION},
+            families=("evidence",),
+        ),
+        Capability(
+            "create_off_cycle_run",
+            "Create ONE new, empty off-cycle, bonus or correction pay run (status draft). This writes shared "
+            "data and runs only when authorised. Give `run_type` (off_cycle, bonus or correction), a `reason`, "
+            "`pay_period_start`, `pay_period_end` and `pay_date` (YYYY-MM-DD); `pay_period` is an optional label. "
+            "Pass only what the user said: never invent a reason or a date. It refuses a missing reason, a "
+            "regular run type, bad or past dates and a duplicate period, and returns what happened. If it "
+            "returns an error whose message says nothing was changed, report that no run was created and why. "
+            "If the error says a run may have been created (outcome_unverified or unexpected_state), say "
+            "exactly that, tell the user to check the PayRun list, and never retry. The new run has no "
+            "employees; employees are added in AgentSwitch, not by this agent.",
+            {"jurisdiction": _JURISDICTION,
+             "run_type": string("off_cycle, bonus or correction.", required=False, maximum=40),
+             "reason": string("Why this run is needed, in the user's words.", required=False, maximum=300),
+             "pay_period_start": string("First day covered, YYYY-MM-DD.", required=False, maximum=20),
+             "pay_period_end": string("Last day covered, YYYY-MM-DD.", required=False, maximum=20),
+             "pay_date": string("Payment date, YYYY-MM-DD.", required=False, maximum=20),
+             "pay_period": string("Optional label for the run.", required=False, maximum=120)},
+            side_effect=True,
+        ),
+        Capability(
             "salary_whatif",
             "Estimate what one India employee's pay would be if their salary changed, without changing "
             "anything. Give exactly one of `percent_raise` (for example 10 for a 10% raise, negative for a "

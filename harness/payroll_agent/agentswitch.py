@@ -146,6 +146,12 @@ class AgentSwitchClient:
         token = await self._token(tenant)
         request_id = next(self._ids)
         attempts = max(1, int(os.getenv("AGENTSWITCH_ATTEMPTS", "5")))
+        # A write is re-sent only when the platform certainly did not run it: 429 rejects the request
+        # first, but a 502 or 503 can arrive after the change happened, and re-sending would repeat it.
+        # The caller reports that failure as "may have changed" instead.
+        name = str(params.get("name") or "")
+        is_write = method == "tools/call" and not name.endswith((".list", ".get"))
+        retry_statuses = {429} if is_write else {429, 502, 503}
         response = None
         for attempt in range(attempts):
             response = await self._client.post(
@@ -158,7 +164,7 @@ class AgentSwitchClient:
                 # an actually-wrong credential must fail loudly, not loop.
                 tenant.token = None
                 return await self._mcp(tenant, method, params, retried=True)
-            if response.status_code not in {429, 502, 503}:
+            if response.status_code not in retry_statuses:
                 break
             if attempt < attempts - 1:
                 await asyncio.sleep(min(0.5 * (2 ** attempt), 4.0))
