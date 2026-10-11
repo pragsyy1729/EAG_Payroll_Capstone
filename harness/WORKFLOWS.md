@@ -111,9 +111,19 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
   ESI-ceiling flag. For the US it reports the employee withholdings (federal and
   state income tax, Social Security, Medicare) from slip deduction components;
   employer-side US taxes, FUTA and SUTA are reported as unavailable because the
-  data does not hold them. Not built: PT and LWF due dates, US due dates, TDS slab
-  maths, the ESI/PT recomputation, Form 16 and Form 24Q generation (REST-only), and
-  deposit tracking (AgentSwitch has none, so `past_due_date` only means the date passed).
+  data does not hold them. Also reported (all labelled "standard calendar, not from AgentSwitch"): India Form 24Q for the
+  quarter of the period end (due 31 July, 31 October, 31 January or 31 May) and Form 16 (by 15 June after the
+  financial year); US Form 941 for the quarter (30 April, 31 July, 31 October, 31 January), Form 940 and W-2
+  (31 January after the year), with a US weekend due date moved to the next Monday and federal holidays not
+  applied. Professional tax and LWF show the tenant's state and cycle (Maharashtra, monthly and half-yearly) with
+  no due date asserted, and US tax deposits (monthly by the 15th, or semiweekly, by a schedule not in AgentSwitch)
+  are not dated either: the result says that is the complete answer for those items. Live (2026-10-11): India
+  August gives Form 24Q 2026-10-31 (a Saturday; no India roll is applied) and Form 16 2027-06-15; US August gives
+  Form 941 2026-11-02 (moved from Saturday 31 October) and Form 940 and W-2 2027-02-01 (moved from Sunday). The real
+  planner answered 2 of 3 runs after the result began stating that; the answers call EPF, ESI and TDS "past-due",
+  which only means the standard date has passed, since AgentSwitch does not track deposits.
+  Not built: TDS slab maths, the ESI/PT recomputation, Form 16 and Form 24Q generation (REST-only, not attempted),
+  and deposit tracking (AgentSwitch has none).
   Design: `docs/superpowers/specs/2026-10-04-statutory-and-lifecycle-reads-design.md`.
 
 ## F. Lifecycle and exceptions

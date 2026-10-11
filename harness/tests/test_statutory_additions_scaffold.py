@@ -66,3 +66,66 @@ def test_state_schedules_report_cycle_and_state_but_assert_no_date():
     assert result["lwf"]["cycle"] == "half_yearly" and "date" not in result["lwf"]
     assert statutory.state_schedules({"PTConfig": []}) == {}
     assert set(statutory.state_schedules({"LWFConfig": [{"state": "X"}]})) == {"lwf"}
+
+
+def india_run():
+    return {"id": "R1", "status": "paid", "pay_period_start": "2026-08-01", "pay_period_end": "2026-08-31"}
+
+
+def slip(**fields):
+    return {"employee_id": "a", "employee_name": "A", "payrun_id": "R1", "gross_pay": 1000.0, "net_pay": 900.0,
+            "esi_covered": 0, **fields}
+
+
+CONFIGS = {"PTConfig": [{"state": "Maharashtra", "deduction_cycle": "monthly"}],
+           "LWFConfig": [{"state": "Maharashtra", "deduction_cycle": "half_yearly"}]}
+
+
+def test_the_india_report_gains_returns_and_state_schedules_and_keeps_its_old_keys():
+    result = statutory.build_statutory(run=india_run(), rows=[slip(epf_employee=100)], jurisdiction="IN",
+                                       configs=CONFIGS, today=TODAY)
+    assert result["returns"]["form_24q"]["date"] == "2026-10-31"
+    assert result["state_schedules"]["professional_tax"]["state"] == "Maharashtra"
+    assert {"statutes", "consistency", "config", "deposit_tracking", "skipped"} <= set(result)
+    assert "deposit_note" not in result
+
+
+def test_the_us_report_gains_returns_and_a_deposit_note_without_a_deposit_date():
+    us_run = {"id": "U1", "status": "paid", "pay_period_start": "2026-09-01", "pay_period_end": "2026-09-30"}
+    rows = [slip(payrun_id="U1", deductions=[{"component_name": "Federal Withholding", "amount": 100}])]
+    result = statutory.build_statutory(run=us_run, rows=rows, jurisdiction="US", configs={}, today=TODAY)
+    assert result["returns"]["form_941"]["date"] == "2026-11-02" and "state_schedules" not in result
+    assert "not in AgentSwitch" in result["deposit_note"] and "15th" in result["deposit_note"]
+
+
+def test_an_uncalculated_run_still_reports_nothing_else():
+    result = statutory.build_statutory(run=india_run(), rows=[slip(net_pay=0)], jurisdiction="IN",
+                                       configs=CONFIGS, today=TODAY)
+    assert result["calculated"] is False and "returns" not in result and "state_schedules" not in result
+
+
+def test_a_run_with_an_unusable_period_end_has_no_returns_and_says_so():
+    result = statutory.build_statutory(run={**india_run(), "pay_period_end": None}, rows=[slip(epf_employee=100)],
+                                       jurisdiction="IN", configs=CONFIGS, today=TODAY)
+    assert result["returns"] == {} and any(item["what"] == "return calendar" for item in result["skipped"])
+
+
+def test_the_capability_description_tells_the_planner_what_may_and_may_not_be_stated():
+    from payroll_agent.capabilities import default_registry
+    description = default_registry().get("statutory_dues").description
+    for phrase in ("Form 24Q", "Form 941", "not from AgentSwitch", "never state a date for professional tax"):
+        assert phrase in description, phrase
+
+
+def test_the_report_says_that_unasserted_dates_are_the_complete_answer_not_missing_evidence():
+    """Found live: the evidence critic read 'state-specific; verify (no date asserted)' as missing evidence and
+    the planner stalled twice with no answer."""
+    india = statutory.build_statutory(run=india_run(), rows=[slip(epf_employee=100)], jurisdiction="IN",
+                                      configs=CONFIGS, today=TODAY)
+    us_run = {"id": "U1", "status": "paid", "pay_period_start": "2026-09-01", "pay_period_end": "2026-09-30"}
+    us = statutory.build_statutory(run=us_run, rows=[slip(payrun_id="U1", deductions=[])], jurisdiction="US",
+                                   configs={}, today=TODAY)
+    for result in (india, us):
+        assert "not missing evidence" in result["note"] and "deliberately not asserted" in result["note"]
+    assert "calculated" not in statutory.build_statutory(run=india_run(), rows=[slip(net_pay=0)], jurisdiction="IN",
+                                                          configs=CONFIGS, today=TODAY).get("note", "")
