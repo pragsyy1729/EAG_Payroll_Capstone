@@ -138,7 +138,8 @@ def _make_llm(task: dict[str, Any], args: argparse.Namespace) -> Any:
     return PacedLLM(GatewayClient(), min_interval=args.min_interval)
 
 
-async def run_task(task: dict[str, Any], args: argparse.Namespace, run_dir: Path) -> dict[str, Any]:
+async def run_task(task: dict[str, Any], args: argparse.Namespace, run_dir: Path, *,
+                   make_client: Any = None, make_llm: Any = None) -> dict[str, Any]:
     armed = task.get("mode", "dry_run") == "live" and args.live
     allow = list(task.get("allow") or [])
     effective_allow = allow if armed else []
@@ -150,8 +151,9 @@ async def run_task(task: dict[str, Any], args: argparse.Namespace, run_dir: Path
         "preflight_error": None, "result": None, "tool_calls": [], "snapshots": {},
     }
     jurisdiction, watch = task["jurisdiction"], task.get("watch") or []
-    inner, llm = AgentSwitchClient(), _make_llm(task, args)
+    inner, llm = (make_client or AgentSwitchClient)(), (make_llm or _make_llm)(task, args)
     recorder = RecordingClient(inner)
+    results: list[dict[str, Any]] = []
     try:
         record["preflight_error"] = await _preflight(task, llm, inner)
         if not record["preflight_error"]:
@@ -186,7 +188,8 @@ async def run_task(task: dict[str, Any], args: argparse.Namespace, run_dir: Path
         await inner.close()
     _write(run_dir / f"{task['id']}.score.json", {"task_id": task["id"], "authored_by": task["authored_by"],
                                                    "verifier_results": results, **outcome})
-    return {"id": task["id"], "family": task["family"], "authored_by": task["authored_by"], "mode": mode, **outcome}
+    return {"id": task["id"], "family": task["family"], "authored_by": task["authored_by"], "mode": mode,
+            "verifier_results": results, **outcome}
 
 
 async def _verify(task: dict[str, Any], record: dict[str, Any], client: Any) -> list[dict[str, Any]]:
