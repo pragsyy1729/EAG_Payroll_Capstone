@@ -216,7 +216,8 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
     jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
     group_by = task.input.get("group_by", "department")
     compare_to = task.input.get("compare_to")
-    variance_wanted = bool(task.input.get("with_variance")) or bool(compare_to)
+    year_on_year = bool(task.input.get("year_on_year")) and not compare_to
+    variance_wanted = bool(task.input.get("with_variance")) or bool(compare_to) or year_on_year
     run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
     if run.get("error"):
         return run
@@ -235,12 +236,35 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
             if problem:
                 return _named_for_cost_report(problem)
         if variance_wanted:
-            compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
+            if year_on_year:
+                runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
+                if problem:
+                    return _named_for_cost_report(problem)
+                last_year = cost_report.same_month_last_year(run, runs)
+                if last_year is None:
+                    reason = "no regular run for the same month last year"     # never fall back to last month
+                else:
+                    compared_to, prev_rows, reason = await _comparison_rows(ctx, run, last_year["id"], jurisdiction)
+            else:
+                compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
             if prev_rows is None:
                 compared_to = None
     return cost_report.build_report(run=run, rows=rows, employees=employees, group_by=group_by,
                                     prev_rows=prev_rows, compared_to=compared_to,
-                                    variance_wanted=variance_wanted, variance_reason=reason)
+                                    variance_wanted=variance_wanted, variance_reason=reason,
+                                    with_components=bool(task.input.get("with_components")))
+
+
+async def run_payroll_register(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: the run and its lines, one line per employee, with totals and the header check."""
+    jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
+    run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
+    if run.get("error"):
+        return {**run, "tool": "payroll_register"}
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "payroll_register")
+    return cost_report.build_register(run=run, rows=[row for row in rows if row.get("payrun_id") == payrun_id])
 
 
 
@@ -566,6 +590,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "list_payrun_employees": run_list_payrun_employees,
     "pre_payroll_scan": run_pre_payroll_scan,
     "payroll_cost_report": run_payroll_cost_report,
+    "payroll_register": run_payroll_register,
     "statutory_dues": run_statutory_dues,
     "lifecycle_report": run_lifecycle_report,
     "salary_whatif": run_salary_whatif,

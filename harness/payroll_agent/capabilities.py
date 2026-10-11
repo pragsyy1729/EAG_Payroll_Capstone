@@ -269,7 +269,9 @@ def default_registry() -> CapabilityRegistry:
             "contribution, total cost = gross + employer contribution, headcount, overtime) and "
             "a breakdown by department or work location. Set `with_variance` (or pass "
             "`compare_to`) to also compare against the previous calculated run: change in totals "
-            "and per group, joiners and leavers, and the overtime change. Read-only; if the run "
+            "and per group, joiners and leavers, and the overtime change. Set `year_on_year` to compare with "
+            "the same month last year and `with_components` for Basic, HRA, allowance, overtime and deduction "
+            "totals. Read-only; if the run "
             "is not calculated it says so and reports nothing else. Department and location are "
             "each employee's current ones. Use a `payrun_id` taken from an earlier outcome (for "
             "example `list_payruns`).",
@@ -281,7 +283,24 @@ def default_registry() -> CapabilityRegistry:
                                        required=False, default=False),
              "compare_to": string("PayRun id to compare against; implies variance. Omit to use the "
                                   "most recent earlier calculated regular run.",
-                                  required=False, maximum=200, format="id")},
+                                  required=False, maximum=200, format="id"),
+             "year_on_year": Argument("boolean", "Compare with the regular run for the same month one year "
+                                      "earlier (it says so when there is none; it never falls back to last "
+                                      "month). Ignored if `compare_to` is given.", required=False, default=False),
+             "with_components": Argument("boolean", "Also total each earning and deduction component (Basic, "
+                                         "HRA, allowances, overtime, EPF, TDS...) with its share of gross.",
+                                         required=False, default=False)},
+            families=("evidence",),
+        ),
+        Capability(
+            "payroll_register",
+            "The payroll register for one calculated PayRun, read-only: one line per employee (days payable, "
+            "LOP days, gross, total deductions, reimbursements, net) sorted by name, the run totals, and a "
+            "check of the PayRun header against the lines. At most 200 lines are returned; `lines_total` and "
+            "`truncated` say whether there are more. If the run is not calculated it says so. Use a "
+            "`payrun_id` taken from an earlier outcome (for example `list_payruns`).",
+            {"jurisdiction": _JURISDICTION,
+             "payrun_id": string("The PayRun to list.", maximum=200, format="id")},
             families=("evidence",),
         ),
         Capability(
