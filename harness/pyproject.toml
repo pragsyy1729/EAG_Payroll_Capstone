@@ -18,6 +18,7 @@ dependencies = [
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp>=1.27",
     "networkx>=3.6,<4",
+    "openai>=1.40,<2",
 ]
 
 [dependency-groups]
