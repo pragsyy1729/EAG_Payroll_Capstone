@@ -65,6 +65,8 @@ class FakeAgentSwitch:
         if name == "PayRun.list":
             rows = [self.existing] if self.existing else []
             return {"data": rows, "total": len(rows)}
+        if name == "Attendance.list":
+            return {"data": [{}], "total": 3}
         if name == "PayRun.run_payroll":
             return {"id": "run-1", "status": "draft"}
         raise AssertionError(f"unexpected tool {name}")

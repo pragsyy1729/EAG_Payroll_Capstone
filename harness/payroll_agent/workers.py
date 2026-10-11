@@ -24,7 +24,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
-from . import cost_report, lifecycle, offcycle, scan_checks, statutory, whatif
+from . import cost_report, evidence, lifecycle, offcycle, scan_checks, statutory, whatif
 from .agentswitch import AgentSwitchClient, AgentSwitchError, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -479,6 +479,33 @@ def _refusal(existing: list[dict[str, Any]], message: str) -> dict[str, Any]:
             "message": message, "existing": [_run_summary(run) for run in existing]}
 
 
+_ATTENDANCE_BATCH = 10
+
+
+async def _attendance_day_total(ctx: RunContext, day: str, jurisdiction: str) -> int | None:
+    """Attendance rows on one date, or None when the count could not be read."""
+    page = await _call_tool(ctx, "Attendance.list", {"date": day, "limit": 1}, jurisdiction)
+    total = None if page.get("error") else page.get("total")
+    return total if isinstance(total, int) and not isinstance(total, bool) else None
+
+
+async def _attendance_counts(ctx: RunContext, days: list[str], jurisdiction: str) -> dict[str, int | None]:
+    counts: dict[str, int | None] = {}
+    for index in range(0, len(days), _ATTENDANCE_BATCH):
+        batch = days[index:index + _ATTENDANCE_BATCH]
+        counts.update(zip(batch, await asyncio.gather(*(_attendance_day_total(ctx, d, jurisdiction) for d in batch))))
+    return counts
+
+
+def _evidence_refusal(code: str, message: str, check: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = {"error": True, "tool": "PayRun.run_payroll", "code": code, "message": message}
+    if code == "missing_evidence":
+        result["missing"] = ["attendance"]
+    if check is not None:
+        result["attendance_check"] = check
+    return result
+
+
 async def run_run_payroll(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     jurisdiction = task.input["jurisdiction"]
     if payrun_id := task.input.get("payrun_id"):
@@ -486,6 +513,7 @@ async def run_run_payroll(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
         if target.get("error"):
             return target
         blocking = [target] if target.get("status") not in RECALCULABLE_STATUSES else []
+        window = {"start": target.get("pay_period_start"), "end": target.get("pay_period_end")}
     else:
         found = await _regular_runs_for_month(ctx, task.input["month"], jurisdiction)
         if found.get("error"):
@@ -494,10 +522,25 @@ async def run_run_payroll(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
             return {"error": True, "tool": "PayRun.run_payroll", "code": "cannot_verify_existing_runs",
                     "message": "More PayRun records exist than could be checked; refusing to run blind."}
         blocking = [run for run in found["runs"] if run.get("status") not in RECALCULABLE_STATUSES]
+        window = {"month": task.input["month"]}
     if blocking:
         return _refusal(blocking, "A run for this period already exists past review; payroll was "
                                   "NOT run and nothing was changed. A human must decide whether to reopen it.")
-    return await _call_tool(ctx, "PayRun.run_payroll", _pass_through(task), jurisdiction)
+    days = evidence.window_days(**window)
+    if days is None:
+        return _evidence_refusal("cannot_verify_attendance", "The pay period could not be determined, so attendance "
+                                 "could not be checked; payroll was NOT run and nothing was changed.")
+    check = evidence.assess(await _attendance_counts(ctx, days, jurisdiction))
+    if check["verdict"] == "unverified":
+        return _evidence_refusal("cannot_verify_attendance", "Attendance could not be counted for "
+                                 f"{len(check['unreadable_days'])} day(s); refusing to run blind. Payroll was NOT run "
+                                 "and nothing was changed.", check)
+    if check["verdict"] == "none":
+        return _evidence_refusal("missing_evidence", f"There are no attendance rows between {check['window'][0]} and "
+                                 f"{check['window'][1]}, so the month cannot be paid on evidence. Payroll was NOT run "
+                                 "and nothing was changed. Attendance for that period is missing.", check)
+    result = await _call_tool(ctx, "PayRun.run_payroll", _pass_through(task), jurisdiction)
+    return result if result.get("error") else {**result, "attendance_check": check}
 
 
 async def run_submit_payrun_for_approval(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
