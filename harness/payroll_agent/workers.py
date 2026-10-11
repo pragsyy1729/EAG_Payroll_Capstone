@@ -398,7 +398,15 @@ async def run_salary_whatif(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"employee_id": employee_id}, jurisdiction)
     if problem:
         return _with_tool(problem, "salary_whatif")
-    basis = whatif.pick_basis_row([row for row in rows if row.get("employee_id") == employee_id])
+    runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "salary_whatif")
+    # Only a regular, non-cancelled run can supply the salary: a bonus, correction or cancelled run's
+    # line is not the employee's monthly pay, and a line whose run cannot be found is not trusted.
+    usable_runs = {run["id"] for run in runs if run.get("run_type") in (None, "regular")
+                   and run.get("status") != "cancelled"}
+    basis = whatif.pick_basis_row([row for row in rows if row.get("employee_id") == employee_id
+                                   and row.get("payrun_id") in usable_runs])
     if basis is None:
         return _whatif_error("no_basis_pay_line", "this employee has no full-month calculated pay line to base an "
                                                   "estimate on")

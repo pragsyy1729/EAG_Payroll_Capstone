@@ -159,3 +159,29 @@ def test_the_platforms_employer_contribution_includes_the_esi_employer_share():
                     esi_employee=150.0, esi_employer=650.0, employer_contribution=1850.0,
                     edli_employer=0.0, epf_admin_charges=0.0, pf_wage=0.0)
     assert whatif.baseline_differences([esi_line], CONFIGS) == []
+
+
+def test_a_gross_that_lands_on_the_esi_ceiling_by_float_noise_is_still_covered():
+    """Review finding: 18750 * 1.12 is 21000.000000000004 in floats, which dropped ESI at the ceiling."""
+    earnings = [{"component_name": "Basic", "amount": 10000.0}, {"component_name": "HRA", "amount": 5000.0},
+                {"component_name": "Special Allowance", "amount": 3750.0}]
+    row = line(earnings=earnings, gross_pay=18750.0, net_pay=17000.0, basic_pay=10000.0, tds=0.0)
+    after = whatif.estimate(row=row, change={"percent_raise": 12.0}, configs=CONFIGS)["after"]
+    assert after["gross"] == 21000.0 and after["esi_employee"] == 157.5 and after["esi_employer"] == 682.5
+
+
+def test_an_inactive_config_is_not_used_as_if_it_were_active():
+    """Review finding: with no active row the inactive one was used silently."""
+    inactive = {**CONFIGS, "ESIConfig": [{**CONFIGS["ESIConfig"][0], "is_active": 0}]}
+    after = whatif.estimate(row=line(), change={"new_monthly_gross": 20200.0}, configs=inactive)["after"]
+    assert after["esi_employee"] is None and "ESI" in after["not_computed"] and after["net"] is None
+
+
+def test_components_that_may_not_recur_are_named_in_the_assumptions():
+    """Review finding: overtime on the basis line is scaled like salary; say so by name."""
+    earnings = [*EARNINGS, {"component_name": "Overtime", "amount": 5000.0}]
+    row = line(earnings=earnings, gross_pay=45000.0, net_pay=42000.0)
+    notes = whatif.estimate(row=row, change={"percent_raise": 10.0}, configs=CONFIGS)["assumptions"]
+    assert any("Overtime" in note and "recur" in note for note in notes)
+    assert not any("recur" in note for note in
+                   whatif.estimate(row=line(), change={"percent_raise": 10.0}, configs=CONFIGS)["assumptions"])

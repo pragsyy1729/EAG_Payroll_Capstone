@@ -11,12 +11,13 @@ from payroll_agent.core.live_graph import TaskSpec
 
 from test_whatif_scaffold import CONFIGS, line  # noqa: E402  (shared fixtures)
 
-READ_ONLY = {"PayRunEmployee.list", "EPFConfig.list", "ESIConfig.list", "PTConfig.list"}
+READ_ONLY = {"PayRunEmployee.list", "PayRun.list", "EPFConfig.list", "ESIConfig.list", "PTConfig.list"}
+RUNS = [{"id": "R1", "run_type": "regular", "status": "paid"}]
 
 
 class FakeAgentSwitch:
-    def __init__(self, rows, configs=CONFIGS, denied=()):
-        self.tables = {"PayRunEmployee": rows, **{k: v for k, v in configs.items()}}
+    def __init__(self, rows, configs=CONFIGS, denied=(), runs=RUNS):
+        self.tables = {"PayRunEmployee": rows, "PayRun": runs, **{k: v for k, v in configs.items()}}
         self.denied, self.calls = set(denied), []
 
     async def call_tool(self, name, arguments=None, *, jurisdiction):
@@ -109,3 +110,17 @@ async def test_the_answer_prompt_tells_the_model_to_label_estimates():
     ctx = workers.RunContext(run_id="r", store=store, llm=llm, agentswitch=None, goal="q")
     await workers.run_answer_with_evidence(ctx, TaskSpec("a", "answer_with_evidence", {"query": "q"}))
     assert "estimate" in seen[0] and "assumptions" in seen[0]
+
+
+async def test_a_cancelled_or_off_cycle_run_never_supplies_the_basis_line():
+    """Review finding: the newest full-month line could come from a bonus or cancelled run."""
+    runs = [*RUNS, {"id": "RB", "run_type": "bonus", "status": "paid"},
+            {"id": "RC", "run_type": "regular", "status": "cancelled"}]
+    rows = [line(id="regular-line"),
+            line(id="bonus-line", payrun_id="RB", created_at="2026-10-02T00:00:00"),
+            line(id="cancelled-line", payrun_id="RC", created_at="2026-10-03T00:00:00"),
+            line(id="unknown-run-line", payrun_id="RX", created_at="2026-10-04T00:00:00")]
+    result = await estimate(FakeAgentSwitch(rows, runs=runs), percent_raise=10)
+    assert result["basis"]["pay_line_id"] == "regular-line"
+    only_bad = await estimate(FakeAgentSwitch(rows[1:], runs=runs), percent_raise=10)
+    assert only_bad["code"] == "no_basis_pay_line"
