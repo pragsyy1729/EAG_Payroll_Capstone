@@ -1,0 +1,15 @@
+{
+  "name": "scaffold_offcycle_report",
+  "note": "Scaffold only. List off-cycle runs and their funding. Read-only.",
+  "steps": [
+    {"reply": {"add": [{"id": "report", "capability": "offcycle_report",
+                        "arguments": {"jurisdiction": "IN"}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "list the off-cycle runs"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "Which off-cycle or bonus runs exist, and are any at risk?"},
+                        "depends_on": ["report"]}],
+               "cancel": [], "finish": false, "reason": "report finished; answer from it"}},
+    {"reply": {"ready": true, "missing": [], "reason": "the off-cycle report is present"}},
+    {"reply": "Scripted answer: see the offcycle_report evidence."}
+  ]
+}
