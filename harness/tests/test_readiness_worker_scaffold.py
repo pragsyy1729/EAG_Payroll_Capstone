@@ -44,6 +44,8 @@ class FakeAgentSwitch:
                 raise AgentSwitchToolError(name, -32000, "boom")
             count = 3 if arguments["date"] in self.attendance_dates else 0
             return {"data": [{}] * min(count, arguments.get("limit", 10)), "total": count}
+        if arguments.get("is_lop") is not True:        # the live platform rejects 1, "true" and "1": a real boolean only
+            raise AgentSwitchToolError(name, -32602, "Invalid tool arguments.")
         return self._page(self.lop_rows.get(arguments["employee_id"], []), arguments)     # one employee's LOP rows
 
     @staticmethod
@@ -67,7 +69,7 @@ async def test_a_calculated_run_gets_every_check_and_only_reads():
     lines = [{**line("E1"), "payrun_id": "R1"}, {**line("E2", lop=2.0), "payrun_id": "R1"}]
     fake = FakeAgentSwitch(lines=lines, employees=people, attendance_dates=[d for d in all_days() if d <= "2026-09-12"],
                            leave=[application("a", "E2", "pending_approval", "2026-09-10", "2026-09-11")],
-                           lop_rows={"E2": [{"date": "2026-09-03", "is_lop": 1}]})
+                           lop_rows={"E2": [{"employee_id": "E2", "date": "2026-09-03", "is_lop": 1}]})
     result = await readiness(fake)
     assert result["calculated"] is True and result["skipped"] == []
     assert set(result["counts"]["by_check"]) == {"proration", "pending_leave", "attendance_coverage", "lop_mismatch"}
@@ -95,7 +97,7 @@ async def test_attendance_is_counted_once_per_day_and_lop_rows_only_for_candidat
     day_calls = [a for n, a in fake.calls if n == "Attendance.list" and "date" in a]
     assert sorted(a["date"] for a in day_calls) == all_days() and all(a["limit"] == 1 for a in day_calls)
     lop_calls = [a for n, a in fake.calls if n == "Attendance.list" and "employee_id" in a]
-    assert [a["employee_id"] for a in lop_calls] == ["E2"] and lop_calls[0]["is_lop"] == 1
+    assert [a["employee_id"] for a in lop_calls] == ["E2"] and lop_calls[0]["is_lop"] is True
 
 
 async def test_candidates_beyond_the_cap_are_counted_not_silently_dropped():
@@ -127,3 +129,17 @@ async def test_a_denied_read_is_the_tools_own_error():
 def test_the_capability_is_registered_read_only():
     capability = default_registry().get("payroll_readiness")
     assert capability.side_effect is False and set(capability.arguments) == {"jurisdiction", "payrun_id"}
+
+
+async def test_the_worker_reports_what_each_check_considered_even_when_nothing_was_found():
+    lines = [{**line("E1", lop=1.0), "payrun_id": "R1"}, {**line("E2"), "payrun_id": "R1"}]
+    fake = FakeAgentSwitch(lines=lines, employees=[person("E1"), person("E2")], attendance_dates=all_days(),
+                           leave=[application("a", "E1", "draft", "2026-10-02", "2026-10-03"),
+                                  application("b", "E2", "pending_approval", "2026-10-02", "2026-10-03")],
+                           lop_rows={"E1": [{"employee_id": "E1", "date": "2026-09-03", "is_lop": 1}]})
+    result = await readiness(fake)
+    assert result["counts"]["total"] == 0                                   # the leave is after the period
+    assert result["checks"]["pending_leave"] == {"ran": True, "considered": 2,
+                                                 "unit": "leave applications (pending or draft)", "findings": 0}
+    assert result["checks"]["attendance_coverage"]["considered"] == 30
+    assert result["checks"]["lop_mismatch"]["considered"] == 1 and result["checks"]["proration"]["considered"] == 2

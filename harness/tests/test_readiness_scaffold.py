@@ -146,3 +146,39 @@ def test_assemble_numbers_sorts_and_caps_the_findings():
     assert result["findings"][0]["severity"] == "high" and result["findings"][0]["id"] == "F-001"
     assert len(result["findings"]) == readiness.MAX_FINDINGS and result["truncated"] is True
     assert result["counts"]["by_severity"] == {"high": 1, "info": 50}
+
+
+def test_a_joiner_whose_working_days_already_start_at_joining_is_prorated_not_flagged():
+    """Found live: a July 29 joiner has days_payable 3 and working_days 3 (the platform counts working days from
+    joining), which is a correctly prorated line. Prorating means fewer days than the period's working days."""
+    people = {"E1": person("E1", joined="2026-07-29"), "E2": person("E2"), "E3": person("E3")}
+    rows = [line("E1", days=3, working=3), line("E2", days=27, working=27), line("E3", days=27, working=27)]
+    assert readiness.proration(rows, people, "2026-07-01", "2026-07-31") == []
+    unprorated = [line("E1", days=27, working=27), line("E2", days=27, working=27)]
+    found = readiness.proration(unprorated, people, "2026-07-01", "2026-07-31")
+    assert [(f["employee_id"], f["severity"]) for f in found] == [("E1", "high")]
+    assert "27 working days" in found[0]["message"]
+
+
+def test_a_prorated_line_is_judged_against_the_periods_working_days_not_its_own():
+    people = {"E1": person("E1"), "E2": person("E2")}
+    rows = [line("E1", days=3, working=3), line("E2", days=27, working=27)]            # E1 has no joining date in the period
+    found = readiness.proration(rows, people, "2026-07-01", "2026-07-31")
+    assert [(f["employee_id"], f["severity"]) for f in found] == [("E1", "info")]
+
+
+def test_the_report_states_which_checks_ran_and_how_much_each_considered():
+    """Found live: with no findings the evidence critic could not tell that pending leave had been checked and
+    called the report 'missing leave'. A check that finds nothing must still leave a trace."""
+    run = {"id": "R", "status": "draft", "pay_period_start": START, "pay_period_end": END}
+    result = readiness.assemble(run=run, calculated=True, findings=[], coverage={}, basic={"below_50_percent": 7},
+                                skipped=[], candidates_skipped=0,
+                                considered={"attendance_coverage": 30, "pending_leave": 4, "proration": 62, "lop_mismatch": 3})
+    checks = result["checks"]
+    assert checks["pending_leave"] == {"ran": True, "considered": 4, "unit": "leave applications (pending or draft)", "findings": 0}
+    assert checks["attendance_coverage"]["unit"] == "calendar days" and checks["proration"]["unit"] == "pay lines"
+    assert checks["attendance_coverage"]["considered"] == 30 and checks["basic_share"]["findings"] == 7
+    assert "pending leave" in result["summary"] and "0 findings" in result["summary"]
+    skipped = readiness.assemble(run=run, calculated=False, findings=[], coverage={}, basic={}, skipped=[],
+                                 candidates_skipped=0, considered={"pending_leave": 2})
+    assert skipped["checks"]["proration"]["ran"] is False and skipped["checks"]["pending_leave"]["ran"] is True

@@ -1,0 +1,53 @@
+{
+  "name": "scaffold_payroll_readiness",
+  "note": "Scaffold only. Is the August payroll ready to submit? Check attendance, leave and proration. Read-only.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "readiness",
+            "capability": "payroll_readiness",
+            "arguments": {
+              "jurisdiction": "IN",
+              "payrun_id": "39b67f17-c8f9-439e-a908-0953a8d35d5b"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "check the August run's month"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "Is the August payroll ready to submit? Check attendance, leave and proration."
+            },
+            "depends_on": [
+              "readiness"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "evidence is in; answer from it"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "the readiness report is present"
+      }
+    },
+    {
+      "reply": "Scripted answer: see the payroll_readiness evidence."
+    }
+  ]
+}
