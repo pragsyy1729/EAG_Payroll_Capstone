@@ -7,7 +7,7 @@ standard India due-date rules and the public US statutory rates used for a sanit
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from .cost_report import _finite as finite
@@ -16,6 +16,7 @@ from .scan_checks import is_calculated
 MONEY_TOLERANCE = 1.0
 MAX_PEOPLE = 25
 INDIA_BASIS = "standard India calendar, not from AgentSwitch"
+US_BASIS = "standard US federal calendar, not from AgentSwitch; federal holidays are not applied"
 RATE_BASIS = "public statutory rate, not from AgentSwitch; observed as a percentage of gross pay"
 DEPOSIT_NOTE = "not tracked in AgentSwitch; whether these dues were paid is unknown"
 NOT_IN_DATA = "not in AgentSwitch data for this seat"
@@ -54,9 +55,9 @@ def _amount(value: Any, bad: list[int]) -> float:
     return amount
 
 
-def _entry(due: date, rule: str, today: date) -> dict[str, Any]:
+def _entry(due: date, rule: str, today: date, basis: str = INDIA_BASIS) -> dict[str, Any]:
     days = (due - today).days
-    return {"date": due.isoformat(), "rule": rule, "basis": INDIA_BASIS,
+    return {"date": due.isoformat(), "rule": rule, "basis": basis,
             "status": "past_due_date" if days < 0 else "due_today" if days == 0 else "upcoming", "days_left": days}
 
 
@@ -75,6 +76,70 @@ def due_dates(period_end: str | None, today: date) -> dict[str, dict[str, Any]]:
                 "esi": _entry(date(year, month, 15), "ESI: 15th of the following month", today)}
     except ValueError:
         return {}
+
+
+def _period_end(value: Any) -> date | None:
+    try:
+        end = date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+    return end if 2000 <= end.year <= 2099 else None
+
+
+def india_returns(period_end: str | None, today: date) -> dict[str, dict[str, Any]]:
+    """Form 24Q for the quarter of the period end, and Form 16 for its financial year."""
+    end = _period_end(period_end)
+    if end is None:
+        return {}
+    if 4 <= end.month <= 6:
+        label, due = "Q1 (Apr-Jun)", date(end.year, 7, 31)
+    elif 7 <= end.month <= 9:
+        label, due = "Q2 (Jul-Sep)", date(end.year, 10, 31)
+    elif end.month >= 10:
+        label, due = "Q3 (Oct-Dec)", date(end.year + 1, 1, 31)
+    else:
+        label, due = "Q4 (Jan-Mar)", date(end.year, 5, 31)
+    fy_start = end.year if end.month >= 4 else end.year - 1
+    return {"form_24q": _entry(due, f"Form 24Q {label}: quarterly TDS return", today),
+            "form_16": _entry(date(fy_start + 1, 6, 15),
+                              f"Form 16 for FY {fy_start}-{str(fy_start + 1)[2:]}: issue by 15 June after the "
+                              "financial year", today)}
+
+
+def _roll(due: date, rule: str) -> tuple[date, str]:
+    """A US due date on a weekend moves to the next Monday. Holidays are not applied."""
+    moved = due + timedelta(days=2 if due.weekday() == 5 else 1 if due.weekday() == 6 else 0)
+    if moved == due:
+        return due, rule
+    return moved, f"{rule} (moved from {due.strftime('%A')} {due.isoformat()})"
+
+
+def us_returns(period_end: str | None, today: date) -> dict[str, dict[str, Any]]:
+    """Form 941 for the quarter of the period end, and Form 940 and W-2 for its calendar year."""
+    end = _period_end(period_end)
+    if end is None:
+        return {}
+    quarter = (end.month - 1) // 3
+    due_941 = (date(end.year, 4, 30), date(end.year, 7, 31), date(end.year, 10, 31), date(end.year + 1, 1, 31))[quarter]
+    january = date(end.year + 1, 1, 31)
+    out = {}
+    for key, due, rule in (("form_941", due_941, f"Form 941 Q{quarter + 1}: quarterly federal payroll tax return"),
+                           ("form_940", january, f"Form 940 for {end.year}: annual FUTA return"),
+                           ("form_w2", january, f"Form W-2 for {end.year}: to employees and the SSA")):
+        moved, text = _roll(due, rule)
+        out[key] = _entry(moved, text, today, US_BASIS)
+    return out
+
+
+def state_schedules(configs: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """Cycle and state for professional tax and LWF from the tenant's config; no due date is asserted."""
+    out = {}
+    for key, name in (("professional_tax", "PTConfig"), ("lwf", "LWFConfig")):
+        row = (configs.get(name) or [None])[0]
+        if row:
+            out[key] = {"state": row.get("state"), "cycle": row.get("deduction_cycle"),
+                        "due": "state-specific; verify with the state portal (no date asserted)"}
+    return out
 
 
 def _india(rows: list[dict[str, Any]], run: dict[str, Any], dues: dict[str, Any],
