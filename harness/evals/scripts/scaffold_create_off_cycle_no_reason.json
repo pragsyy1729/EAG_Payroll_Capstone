@@ -1,0 +1,17 @@
+{
+  "name": "scaffold_create_off_cycle_no_reason",
+  "note": "Scaffold only. A bonus run with no reason cannot pass the guard, so nothing is created.",
+  "steps": [
+    {"reply": {"add": [{"id": "create", "capability": "create_off_cycle_run",
+                        "arguments": {"jurisdiction": "IN", "run_type": "bonus", "pay_period_start": "2099-01-01",
+                                      "pay_period_end": "2099-01-31", "pay_date": "2099-01-31"},
+                        "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "try a bonus run with no reason"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "Create a bonus run for January 2099."},
+                        "depends_on": ["create"]}],
+               "cancel": [], "finish": false, "reason": "it was refused; report that"}},
+    {"reply": {"ready": true, "missing": [], "reason": "a refusal is ready evidence"}},
+    {"reply": "Scripted answer: no run was created; see the refusal in the evidence."}
+  ]
+}
