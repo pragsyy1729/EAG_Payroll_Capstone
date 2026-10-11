@@ -1,0 +1,126 @@
+"""Implementation scaffolding for the salary_whatif worker and capability.
+
+NOT the team's graded tests. A fake AgentSwitch client stands in for the platform.
+"""
+from __future__ import annotations
+
+from payroll_agent import workers
+from payroll_agent.agentswitch import AgentSwitchToolError
+from payroll_agent.capabilities import CapabilityError, default_registry
+from payroll_agent.core.live_graph import TaskSpec
+
+from test_whatif_scaffold import CONFIGS, line  # noqa: E402  (shared fixtures)
+
+READ_ONLY = {"PayRunEmployee.list", "PayRun.list", "EPFConfig.list", "ESIConfig.list", "PTConfig.list"}
+RUNS = [{"id": "R1", "run_type": "regular", "status": "paid"}]
+
+
+class FakeAgentSwitch:
+    def __init__(self, rows, configs=CONFIGS, denied=(), runs=RUNS):
+        self.tables = {"PayRunEmployee": rows, "PayRun": runs, **{k: v for k, v in configs.items()}}
+        self.denied, self.calls = set(denied), []
+
+    async def call_tool(self, name, arguments=None, *, jurisdiction):
+        arguments = arguments or {}
+        self.calls.append((name, arguments))
+        assert name in READ_ONLY, f"the estimator must stay read-only; unexpected tool {name}"
+        if name in self.denied:
+            raise AgentSwitchToolError(name, -32001, "denied")
+        entity = name.partition(".")[0]
+        rows = [r for r in self.tables.get(entity, [])
+                if all(r.get(k) == arguments[k] for k in ("employee_id",) if k in arguments)]
+        offset, limit = arguments.get("offset", 0), min(arguments.get("limit", 10), 100)
+        return {"data": rows[offset:offset + limit], "limit": limit, "offset": offset, "total": len(rows)}
+
+
+def estimate(fake, jurisdiction="IN", **extra):
+    ctx = workers.RunContext(run_id="r", store=None, llm=None, agentswitch=fake)
+    args = {"jurisdiction": jurisdiction, "employee_id": "E1", **extra}
+    return workers.run_salary_whatif(ctx, TaskSpec("w", "salary_whatif", args))
+
+
+async def test_an_estimate_reads_only_and_returns_the_labelled_result():
+    fake = FakeAgentSwitch([line()])
+    result = await estimate(fake, percent_raise=10)
+    assert result["estimate"] is True and result["written"] is False
+    assert result["after"]["net"] == 40900.0
+    assert {name for name, _ in fake.calls} <= READ_ONLY
+
+
+async def test_the_pay_lines_are_fetched_for_that_employee_only():
+    fake = FakeAgentSwitch([line(), line(id="L2", employee_id="E2")])
+    result = await estimate(fake, percent_raise=10)
+    assert result["basis"]["pay_line_id"] == "L1"
+
+
+async def test_the_us_tenant_is_not_supported_and_nothing_is_called():
+    fake = FakeAgentSwitch([line()])
+    result = await estimate(fake, jurisdiction="US", percent_raise=10)
+    assert result["error"] is True and result["code"] == "jurisdiction_unsupported" and fake.calls == []
+
+
+async def test_no_change_or_two_changes_is_an_invalid_change():
+    for extra in ({}, {"percent_raise": 10, "new_monthly_gross": 50000}):
+        result = await estimate(FakeAgentSwitch([line()]), **extra)
+        assert result["code"] == "invalid_change" and result["tool"] == "salary_whatif"
+
+
+async def test_an_employee_with_no_full_month_line_has_no_basis():
+    result = await estimate(FakeAgentSwitch([line(days_payable=4.0)]), percent_raise=10)
+    assert result["error"] is True and result["code"] == "no_basis_pay_line"
+
+
+async def test_bad_earnings_are_reported_not_scaled():
+    result = await estimate(FakeAgentSwitch([line(gross_pay=45000.0)]), percent_raise=10)
+    assert result["error"] is True and result["code"] == "estimate_unavailable"
+
+
+async def test_a_denied_config_read_is_the_tools_own_error():
+    result = await estimate(FakeAgentSwitch([line()], denied=("ESIConfig.list",)), percent_raise=10)
+    assert result["error"] is True and result["code"] == -32001
+
+
+def test_the_capability_is_registered_and_validates_its_arguments():
+    registry = default_registry()
+    assert "salary_whatif" in registry and registry.get("salary_whatif").side_effect is False
+    ok = registry.validate("salary_whatif", {"jurisdiction": "IN", "employee_id": "E1", "percent_raise": 9.5},
+                           known_values={"E1"})
+    assert ok["percent_raise"] == 9.5
+    for bad in ({"percent_raise": "ten"}, {"percent_raise": -100}, {"new_monthly_gross": 0}):
+        try:
+            registry.validate("salary_whatif", {"jurisdiction": "IN", "employee_id": "E1", **bad},
+                              known_values={"E1"})
+        except CapabilityError:
+            continue
+        raise AssertionError(f"{bad} should have been rejected")
+
+
+async def test_the_answer_prompt_tells_the_model_to_label_estimates():
+    """Found live: the planner chose the estimator correctly but the answer gave 26,684 with no mention of
+    'estimate' or its assumptions, because only the answer step's own prompt reaches that call."""
+    from types import SimpleNamespace
+    seen: list[str] = []
+
+    async def llm(prompt, system, **kwargs):
+        seen.append(system)
+        return {"text": "t"}
+
+    nodes = {"n1": {"skill": "salary_whatif", "state": "succeeded", "input": {}, "result": {"estimate": True}}}
+    store = SimpleNamespace(snapshot=lambda run_id: SimpleNamespace(nodes=nodes))
+    ctx = workers.RunContext(run_id="r", store=store, llm=llm, agentswitch=None, goal="q")
+    await workers.run_answer_with_evidence(ctx, TaskSpec("a", "answer_with_evidence", {"query": "q"}))
+    assert "estimate" in seen[0] and "assumptions" in seen[0]
+
+
+async def test_a_cancelled_or_off_cycle_run_never_supplies_the_basis_line():
+    """Review finding: the newest full-month line could come from a bonus or cancelled run."""
+    runs = [*RUNS, {"id": "RB", "run_type": "bonus", "status": "paid"},
+            {"id": "RC", "run_type": "regular", "status": "cancelled"}]
+    rows = [line(id="regular-line"),
+            line(id="bonus-line", payrun_id="RB", created_at="2026-10-02T00:00:00"),
+            line(id="cancelled-line", payrun_id="RC", created_at="2026-10-03T00:00:00"),
+            line(id="unknown-run-line", payrun_id="RX", created_at="2026-10-04T00:00:00")]
+    result = await estimate(FakeAgentSwitch(rows, runs=runs), percent_raise=10)
+    assert result["basis"]["pay_line_id"] == "regular-line"
+    only_bad = await estimate(FakeAgentSwitch(rows[1:], runs=runs), percent_raise=10)
+    assert only_bad["code"] == "no_basis_pay_line"

@@ -24,7 +24,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
-from . import cost_report, lifecycle, scan_checks, statutory
+from . import cost_report, lifecycle, scan_checks, statutory, whatif
 from .agentswitch import AgentSwitchClient, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -380,6 +380,48 @@ async def run_lifecycle_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any
 RECALCULABLE_STATUSES = frozenset({"draft", "review"})
 
 
+def _whatif_error(code: str, message: str) -> dict[str, Any]:
+    return {"error": True, "tool": "salary_whatif", "code": code, "message": message}
+
+
+async def run_salary_whatif(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch the employee's pay lines and the three configs, then let whatif judge."""
+    jurisdiction, employee_id = task.input["jurisdiction"], task.input["employee_id"]
+    if jurisdiction != "IN":
+        return _whatif_error("jurisdiction_unsupported",
+                             "the estimator needs EPF, ESI and professional-tax configuration, which only the "
+                             "India tenant exposes")
+    try:
+        change = whatif.parse_change(task.input.get("percent_raise"), task.input.get("new_monthly_gross"))
+    except whatif.WhatIfError as problem:
+        return _whatif_error("invalid_change", str(problem))
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"employee_id": employee_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "salary_whatif")
+    runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "salary_whatif")
+    # Only a regular, non-cancelled run can supply the salary: a bonus, correction or cancelled run's
+    # line is not the employee's monthly pay, and a line whose run cannot be found is not trusted.
+    usable_runs = {run["id"] for run in runs if run.get("run_type") in (None, "regular")
+                   and run.get("status") != "cancelled"}
+    basis = whatif.pick_basis_row([row for row in rows if row.get("employee_id") == employee_id
+                                   and row.get("payrun_id") in usable_runs])
+    if basis is None:
+        return _whatif_error("no_basis_pay_line", "this employee has no full-month calculated pay line to base an "
+                                                  "estimate on")
+    configs: dict[str, list[dict[str, Any]]] = {}
+    for name in ("EPFConfig", "ESIConfig", "PTConfig"):
+        page = await _call_tool(ctx, f"{name}.list", {"limit": 20}, jurisdiction)
+        if page.get("error"):
+            return page
+        configs[name] = page.get("data") or []
+    try:
+        return whatif.estimate(row=basis, change=change, configs=configs)
+    except whatif.WhatIfError as problem:
+        return _whatif_error("estimate_unavailable", str(problem))
+
+
 def _refusal(existing: list[dict[str, Any]], message: str) -> dict[str, Any]:
     return {"error": True, "tool": "PayRun.run_payroll", "code": "run_exists_not_recalculable",
             "message": message, "existing": [_run_summary(run) for run in existing]}
@@ -444,7 +486,8 @@ async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str,
         "run_exists_not_recalculable), say plainly that the action was NOT performed and why, and "
         "name the existing record -- never describe a refused action as done. If the error says the change may "
         "have happened (outcome_unverified or unexpected_status), say exactly that and tell the user to check "
-        "the record; do not say it was not performed."
+        "the record; do not say it was not performed. If a result is marked estimate: true, call the "
+        "figures an estimate, say nothing was changed, and state the assumptions it lists."
     )
     request = _answer_request()
     reply = await ctx.llm(prompt, system, **({"request": request} if request else {}))
@@ -473,6 +516,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "payroll_cost_report": run_payroll_cost_report,
     "statutory_dues": run_statutory_dues,
     "lifecycle_report": run_lifecycle_report,
+    "salary_whatif": run_salary_whatif,
     "run_payroll": run_run_payroll,
     "submit_payrun_for_approval": run_submit_payrun_for_approval,
     "answer_with_evidence": run_answer_with_evidence,
