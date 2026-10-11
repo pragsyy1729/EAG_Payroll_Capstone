@@ -1,0 +1,52 @@
+{
+  "name": "scaffold_reimbursement_status",
+  "note": "Scaffold only. Where are the reimbursement claims, and why is one partly approved? Read-only.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "node",
+            "capability": "reimbursement_status",
+            "arguments": {
+              "jurisdiction": "IN"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "gather the evidence"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "Where are the reimbursement claims, and why is one partly approved?"
+            },
+            "depends_on": [
+              "node"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "evidence is in; answer from it"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "the evidence is present"
+      }
+    },
+    {
+      "reply": "Scripted answer: see the reimbursement_status evidence."
+    }
+  ]
+}
