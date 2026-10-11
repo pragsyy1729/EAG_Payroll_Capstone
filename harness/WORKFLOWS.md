@@ -91,9 +91,27 @@ hunts outliers. The LLM only plans and explains; the sweep itself is code.
 
 Status: **partial**. `pre_payroll_scan` covers payee status, month-over-month
 net-pay change, net-pay sanity and duplicate payees, read-only. Duplicate bank
-accounts and missing PAN/UAN/ESI are blocked by field redaction for this seat;
-joiner/leaver proration and pending leave/attendance items are not built.
+accounts and missing PAN/UAN/ESI are blocked by field redaction for this seat.
 Design: `docs/superpowers/specs/2026-09-30-pre-payroll-scan-design.md`.
+
+`payroll_readiness` (read-only, a separate capability so `pre_payroll_scan` and its tests are untouched) covers
+the rest, calculated or not: attendance coverage for the period (one row count per day; no rows at all is high,
+rows that stop more than 3 days before the end is medium, a shorter tail is only reported as a fact), pending
+and draft leave applications that overlap the period, joiners and leavers who were or were not prorated, pay
+lines whose LOP days disagree with attendance, and Basic below 50% of gross as one aggregated flag for review
+(not a legal conclusion). Every result states which checks ran and how many items each considered, because a
+check that finds nothing otherwise leaves no trace. On an uncalculated run it skips the line-based checks and
+says so. Live (India, 2026-10-11): July, August and the September draft are clean apart from the Basic flag
+(38 of 62 July lines and 39 of 65 August lines are below 50%; the lowest is 43.5%), attendance is complete
+through each month's last day, and every pay line (62 in July, 65 in August) matches the LOP attendance rows in both
+directions (LOP on the line that attendance does not show, and LOP attendance the line did not deduct).
+Found while building it: the platform counts a joiner's working days from the joining date (a 29 July joiner has
+3 of 3 days), so a line is prorated when it has fewer days than the period's working days; `Attendance.list`
+accepts `is_lop` only as a real boolean (`1` and `"true"` are rejected); and attendance for September runs to
+30 September company-wide even though one employee's rows stop on 12 September. Not built: duplicate bank
+accounts and missing PAN/UAN/ESI (redacted for this seat). A run whose pay lines share no clear working-day count
+cannot have joiners and leavers judged, and says so instead of guessing. The real planner answered 3 of 4 readiness questions;
+the rest ended in malformed planner output (known planner flakiness).
 
 ## D. Reporting and analytics (read-only)
 

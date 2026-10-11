@@ -349,6 +349,8 @@ new work is read wrappers plus Python computation.
 - [x] Employee "why" answers (`payslip_breakdown`, `explain_pay_change`, `salary_structure_view`,
       `reimbursement_status`), plus two fixes found live: full-name employee search, and component-name
       matching across runs. Open: planner completes the pay-change question about 1 time in 3.
+- [x] `payroll_readiness` (attendance coverage, pending leave, proration, LOP mismatch, Basic share),
+      a separate capability from `pre_payroll_scan`. LOP is read in one fetch and compared for every line, both directions.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
