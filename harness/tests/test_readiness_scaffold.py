@@ -234,3 +234,30 @@ def test_lop_is_compared_in_both_directions_for_every_line():
     found = readiness.lop_mismatches(rows, lop, START, END)
     assert [(f["employee_id"], f["evidence"]) for f in found] == [
         ("E1", {"line_lop_days": 0.0, "attendance_lop_days": 2})]
+
+
+def test_attendance_that_starts_late_is_a_finding_just_like_attendance_that_stops_early():
+    """Cross-branch follow-up from the guarded-recalc review: only the tail was checked, so a month with rows only
+    at the end looked covered."""
+    days = readiness.period_dates(START, END)
+    late = {d: (5 if d >= "2026-09-20" else 0) for d in days}
+    coverage, found = readiness.attendance_coverage(late, START, END)
+    assert coverage["first_date_with_rows"] == "2026-09-20" and coverage["uncovered_head_days"] == 19
+    assert [(f["check"], f["severity"]) for f in found] == [("attendance_coverage", "medium")]
+    assert "no rows before 2026-09-20" in found[0]["message"] and "no rows after" not in found[0]["message"]
+    only_last = readiness.attendance_coverage({d: (5 if d == END else 0) for d in days}, START, END)
+    assert "before 2026-09-30" in only_last[1][0]["message"]
+
+
+def test_a_gap_at_both_ends_is_one_finding_that_names_both():
+    days = readiness.period_dates(START, END)
+    middle = {d: (5 if "2026-09-10" <= d <= "2026-09-20" else 0) for d in days}
+    found = readiness.attendance_coverage(middle, START, END)[1]
+    assert len(found) == 1 and "before 2026-09-10" in found[0]["message"] and "after 2026-09-20" in found[0]["message"]
+
+
+def test_a_head_gap_within_the_tolerance_is_not_a_finding():
+    days = readiness.period_dates(START, END)
+    coverage, found = readiness.attendance_coverage({d: (5 if d >= "2026-09-04" else 0) for d in days}, START, END)
+    assert found == [] and coverage["uncovered_head_days"] == 3
+    assert readiness.attendance_coverage({d: (5 if d >= "2026-09-05" else 0) for d in days}, START, END)[1] != []

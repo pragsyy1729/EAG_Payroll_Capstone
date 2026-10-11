@@ -98,7 +98,8 @@ Design: `docs/superpowers/specs/2026-09-30-pre-payroll-scan-design.md`.
 
 `payroll_readiness` (read-only, a separate capability so `pre_payroll_scan` and its tests are untouched) covers
 the rest, calculated or not: attendance coverage for the period (one row count per day; no rows at all is high,
-rows that stop more than 3 days before the end is medium, a shorter tail is only reported as a fact), pending
+rows that start more than 3 days after the period start or stop more than 3 days before its end is medium, a shorter
+gap is only reported as a fact), pending
 and draft leave applications that overlap the period, joiners and leavers who were or were not prorated, pay
 lines whose LOP days disagree with attendance, and Basic below 50% of gross as one aggregated flag for review
 (not a legal conclusion). Every result states which checks ran and how many items each considered, because a

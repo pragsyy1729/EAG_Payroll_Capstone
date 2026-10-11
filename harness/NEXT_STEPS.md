@@ -356,8 +356,8 @@ new work is read wrappers plus Python computation.
 - [x] Statutory additions: Form 24Q, Form 16, Form 941, 940 and W-2 calendar, and PT/LWF state and cycle with no
       date asserted. Not done: Form 16 / Form 24Q generation (REST-only).
 - [x] Guarded `recalculate_payrun`, the `run_payroll` attendance-evidence check, and decline guidance for "pay extra,
-      skipping approval" and "bank file / disburse"; the three stale section F workflow rows removed. Deferred: merge the
-      duplicate attendance helpers (`workers._attendance_counts` here, `_day_count` in `payroll_readiness`) if both land.
+      skipping approval" and "bank file / disburse"; the three stale section F workflow rows removed. The duplicate
+      attendance helper was merged into `workers._attendance_counts` when the branches landed.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.

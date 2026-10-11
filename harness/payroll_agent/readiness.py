@@ -123,18 +123,24 @@ def attendance_coverage(day_counts: dict[str, int | None], start: Any, end: Any)
     days = sorted(day_counts)
     unreadable = [d for d in days if day_counts[d] is None]
     with_rows = [d for d in days if (day_counts[d] or 0) > 0]
-    last_row = max(with_rows) if with_rows else None
+    first_row, last_row = (min(with_rows), max(with_rows)) if with_rows else (None, None)
     tail = [d for d in days if last_row is None or d > last_row]
-    coverage = {"period_days": len(days), "days_with_rows": len(with_rows), "last_date_with_rows": last_row,
+    head = [d for d in days if first_row is not None and d < first_row]
+    coverage = {"period_days": len(days), "days_with_rows": len(with_rows), "first_date_with_rows": first_row,
+                "last_date_with_rows": last_row, "uncovered_head_days": len(head),
                 "uncovered_tail_days": len(tail) if last_row is not None else len(days),
                 "unreadable_days": unreadable}
     found: list[dict[str, Any]] = []
     if not with_rows and not unreadable:
         found.append(_finding("attendance_coverage", "high", None, None,
                               f"No attendance rows at all between {start} and {end}", coverage))
-    elif with_rows and len(tail) > TAIL_TOLERANCE_DAYS and not unreadable:
-        found.append(_finding("attendance_coverage", "medium", None, None,
-                              f"Attendance has no rows after {last_row} ({len(tail)} days before {end})", coverage))
+    elif with_rows and not unreadable and (len(tail) > TAIL_TOLERANCE_DAYS or len(head) > TAIL_TOLERANCE_DAYS):
+        parts = []
+        if len(head) > TAIL_TOLERANCE_DAYS:
+            parts.append(f"no rows before {first_row} ({len(head)} days after {start})")
+        if len(tail) > TAIL_TOLERANCE_DAYS:
+            parts.append(f"no rows after {last_row} ({len(tail)} days before {end})")
+        found.append(_finding("attendance_coverage", "medium", None, None, "Attendance has " + " and ".join(parts), coverage))
     if unreadable:
         found.append(_finding("attendance_coverage", "info", None, None,
                               f"Attendance could not be counted for {len(unreadable)} day(s): {', '.join(unreadable[:5])}",

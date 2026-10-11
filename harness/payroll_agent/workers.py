@@ -223,16 +223,6 @@ async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any
     return {"payrun_id": payrun_id, "run_status": run.get("status"), "compared_to": compared_to, **result}
 
 
-_ATTENDANCE_BATCH = 10
-
-
-async def _day_count(ctx: RunContext, day: str, jurisdiction: str) -> int | None:
-    """Attendance rows on one date, or None when the count could not be read."""
-    page = await _call_tool(ctx, "Attendance.list", {"date": day, "limit": 1}, jurisdiction)
-    total = page.get("total") if not page.get("error") else None
-    return total if isinstance(total, int) and not isinstance(total, bool) else None
-
-
 async def run_payroll_readiness(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     """Read-only: fetch, then let readiness judge. Works on an uncalculated run (attendance and leave
     need only the period); the line-based checks are then skipped with a stated reason."""
@@ -264,12 +254,7 @@ async def run_payroll_readiness(ctx: RunContext, task: TaskSpec) -> dict[str, An
         if problem:
             return _with_tool(problem, "payroll_readiness")
         applications.extend(item for item in page if item.get("status") == status)
-    counts: dict[str, int | None] = {}
-    for index in range(0, len(days), _ATTENDANCE_BATCH):
-        batch = days[index:index + _ATTENDANCE_BATCH]
-        counted = await asyncio.gather(*(_day_count(ctx, day, jurisdiction) for day in batch))
-        counts.update(zip(batch, counted))
-    coverage, found = readiness.attendance_coverage(counts, start, end)
+    coverage, found = readiness.attendance_coverage(await _attendance_counts(ctx, days, jurisdiction), start, end)
     found += readiness.pending_leave(applications, scoped, start, end)
     considered = {"attendance_coverage": len(days), "pending_leave": len(applications)}
     skipped: list[dict[str, str]] = []
