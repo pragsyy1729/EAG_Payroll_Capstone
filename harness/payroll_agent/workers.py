@@ -227,6 +227,7 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
     employees: list[dict[str, Any]] = []
     prev_rows: list[dict[str, Any]] | None = None
     compared_to: str | None = None
+    compared_run: dict[str, Any] | None = None
     reason = "no earlier calculated regular run"
     # An uncalculated run reports nothing else, so it needs neither the employee list
     # nor a comparison run.
@@ -245,6 +246,7 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
                     reason = "no regular run for the same month last year"     # never fall back to last month
                 else:
                     compared_to, prev_rows, reason = await _comparison_rows(ctx, run, last_year["id"], jurisdiction)
+                    compared_run = last_year
             else:
                 baseline = await _call_tool(ctx, "PayRun.get", {"id": compare_to}, jurisdiction) if compare_to else {}
                 if baseline and not baseline.get("error") and baseline.get("status") == "cancelled":
@@ -254,12 +256,16 @@ async def run_payroll_cost_report(ctx: RunContext, task: TaskSpec) -> dict[str, 
                               f"({baseline.get('run_type')})")
                 else:
                     compared_to, prev_rows, reason = await _comparison_rows(ctx, run, compare_to, jurisdiction)
+                    compared_run = baseline if baseline and not baseline.get("error") else None
             if prev_rows is None:
                 compared_to = None
-    return cost_report.build_report(run=run, rows=rows, employees=employees, group_by=group_by,
-                                    prev_rows=prev_rows, compared_to=compared_to,
-                                    variance_wanted=variance_wanted, variance_reason=reason,
-                                    with_components=bool(task.input.get("with_components")))
+    result = cost_report.build_report(run=run, rows=rows, employees=employees, group_by=group_by,
+                                      prev_rows=prev_rows, compared_to=compared_to,
+                                      variance_wanted=variance_wanted, variance_reason=reason,
+                                      with_components=bool(task.input.get("with_components")))
+    if result.get("variance") and compared_run:     # a draft or pending baseline must be visible as such
+        result["variance"]["compared_run"] = {"number": compared_run.get("number"), "status": compared_run.get("status")}
+    return result
 
 
 async def run_payroll_register(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:

@@ -123,3 +123,13 @@ async def test_a_cancelled_or_non_regular_comparison_run_is_refused_as_a_baselin
     assert not any(a.get("payrun_id") in ("CANCELLED", "BONUS") for n, a in fake.calls if n == "PayRunEmployee.list")
     ok = await report(fake, compare_to="PREV")
     assert ok["variance"]["compared_to"] == "PREV"
+
+
+async def test_the_variance_names_the_status_of_the_run_it_compared_with():
+    """Review finding: a draft or pending baseline was used without saying so."""
+    year = await report(fixture(), year_on_year=True)
+    assert year["variance"]["compared_run"] == {"number": "PRUN-LASTYEAR", "status": "paid"}
+    fake = fixture()
+    fake.runs["PREV"]["status"] = "pending_approval"
+    explicit = await report(fake, compare_to="PREV")
+    assert explicit["variance"]["compared_run"] == {"number": "PRUN-PREV", "status": "pending_approval"}
