@@ -1,0 +1,53 @@
+{
+  "name": "scaffold_payslip_breakdown",
+  "note": "Scaffold only. Show my gross-to-net breakdown. Read-only.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "node",
+            "capability": "payslip_breakdown",
+            "arguments": {
+              "jurisdiction": "IN",
+              "employee_id": "f8e8a973-1c34-4025-ae55-fbe728ba7b35"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "gather the evidence"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "Show my gross-to-net breakdown."
+            },
+            "depends_on": [
+              "node"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "evidence is in; answer from it"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "the evidence is present"
+      }
+    },
+    {
+      "reply": "Scripted answer: see the payslip_breakdown evidence."
+    }
+  ]
+}

@@ -24,7 +24,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
-from . import cost_report, lifecycle, offcycle, scan_checks, statutory, whatif
+from . import cost_report, explain, lifecycle, offcycle, scan_checks, statutory, whatif
 from .agentswitch import AgentSwitchClient, AgentSwitchError, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -58,8 +58,25 @@ def _pass_through(task: TaskSpec, *, exclude: tuple[str, ...] = ("jurisdiction",
     return {key: value for key, value in task.input.items() if key not in exclude}
 
 
+def _employee_text(row: dict[str, Any]) -> str:
+    return " ".join(str(row.get(key) or "") for key in ("first_name", "last_name", "email", "number")).lower()
+
+
 async def run_list_employees(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
-    return await _call_tool(ctx, "Employee.list", _pass_through(task), task.input["jurisdiction"])
+    jurisdiction, args = task.input["jurisdiction"], _pass_through(task)
+    words = str(args.get("search") or "").split()
+    if len(words) < 2:
+        return await _call_tool(ctx, "Employee.list", args, jurisdiction)
+    # The platform's search matches one word, not a full name ("Meera More" finds nobody while "Meera" finds
+    # five people), so search by the first word and keep the rows that contain every word.
+    rows, problem = await _fetch_all(ctx, "Employee.list", {"search": words[0]}, jurisdiction)
+    if problem:
+        return problem
+    hits = [row for row in rows if all(word.lower() in _employee_text(row) for word in words)]
+    limit = args.get("limit", 10)
+    return {"data": hits[:limit], "total": len(hits), "limit": limit, "offset": 0,
+            "note": f"the platform search matches one word; searched for {words[0]!r} and kept rows containing "
+                    f"all of {words}"}
 
 
 def _month_of(run: dict[str, Any]) -> str:
@@ -474,6 +491,105 @@ async def run_create_off_cycle_run(ctx: RunContext, task: TaskSpec) -> dict[str,
         return offcycle.outcome(payload, after)
 
 
+def _explain_error(capability: str, code: str, message: str) -> dict[str, Any]:
+    return {"error": True, "tool": capability, "code": code, "message": message}
+
+
+async def _employee_lines(ctx: RunContext, capability: str, employee_id: str,
+                          jurisdiction: str) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]] | None,
+                                                      dict[str, Any] | None]:
+    """The employee's calculated lines of regular, non-cancelled runs (newest first), or an error result."""
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"employee_id": employee_id}, jurisdiction)
+    if problem:
+        return None, _with_tool(problem, capability)
+    runs, problem = await _fetch_all(ctx, "PayRun.list", {}, jurisdiction)
+    if problem:
+        return None, _with_tool(problem, capability)
+    return explain.usable_lines([row for row in rows if row.get("employee_id") == employee_id], runs), None
+
+
+async def run_payslip_breakdown(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    jurisdiction, employee_id = task.input["jurisdiction"], task.input["employee_id"]
+    lines, problem = await _employee_lines(ctx, "payslip_breakdown", employee_id, jurisdiction)
+    if problem:
+        return problem
+    wanted = task.input.get("payrun_id")
+    chosen = next((pair for pair in lines if wanted is None or pair[1].get("payrun_id") == wanted), None)
+    if chosen is None:
+        return _explain_error("payslip_breakdown", "no_pay_line",
+                              "this employee has no calculated pay line" + (f" in run {wanted}" if wanted else ""))
+    return explain.breakdown(chosen[1], chosen[0])
+
+
+async def run_explain_pay_change(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    jurisdiction, employee_id = task.input["jurisdiction"], task.input["employee_id"]
+    lines, problem = await _employee_lines(ctx, "explain_pay_change", employee_id, jurisdiction)
+    if problem:
+        return problem
+    by_run = {row.get("payrun_id"): (run, row) for run, row in lines}
+    to_id, from_id = task.input.get("to_payrun_id"), task.input.get("from_payrun_id")
+    if to_id or from_id:
+        to_pair = by_run.get(to_id) if to_id else (lines[0] if lines else None)
+        from_pair = by_run.get(from_id) if from_id else (lines[1] if len(lines) > 1 else None)
+    else:
+        to_pair, from_pair = (lines[0], lines[1]) if len(lines) >= 2 else (None, None)
+    if to_pair is None or from_pair is None:
+        lacking = [run_id for run_id in (to_id, from_id) if run_id and run_id not in by_run]
+        if lacking:
+            detail = (f"run {', '.join(lacking)} has no calculated pay line for this employee (it may be "
+                      "uncalculated, cancelled or not a regular run); omit the run ids to compare the latest two "
+                      "calculated runs")
+        else:
+            detail = f"only {len(lines)} calculated pay line(s) of regular runs exist for this employee, and two are needed"
+        return _explain_error("explain_pay_change", "need_two_lines", detail)
+    if to_pair[1].get("payrun_id") == from_pair[1].get("payrun_id"):
+        return _explain_error("explain_pay_change", "cannot_explain",
+                              "the two runs are the same run; compare a run with itself shows nothing. Omit the "
+                              "run ids to compare the latest two calculated runs")
+    try:
+        result = explain.change(to_run=to_pair[0], to_row=to_pair[1], from_run=from_pair[0], from_row=from_pair[1])
+    except explain.ExplainError as problem:
+        return _explain_error("explain_pay_change", "cannot_explain", str(problem))
+    if str(from_pair[0].get("pay_period_start") or "") > str(to_pair[0].get("pay_period_start") or ""):
+        result["warning"] = ("from_payrun_id is the later run, so the change reads backwards: a rise here means pay "
+                             "was higher in the earlier run")
+    return result
+
+
+async def run_salary_structure_view(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    jurisdiction, employee_id = task.input["jurisdiction"], task.input["employee_id"]
+    employee = await _call_tool(ctx, "Employee.get", {"id": employee_id}, jurisdiction)
+    if employee.get("error"):
+        return {**employee, "tool": "salary_structure_view"}
+    structure = None
+    if employee.get("salary_structure_id"):
+        found = await _call_tool(ctx, "SalaryStructure.get", {"id": employee["salary_structure_id"]}, jurisdiction)
+        if found.get("error") and "not found" not in str(found.get("message", "")).lower():
+            return {**found, "tool": "salary_structure_view"}      # a failed read is not "no structure on file"
+        structure = None if found.get("error") else found
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"employee_id": employee_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "salary_structure_view")
+    revisions, problem = await _fetch_all(ctx, "SalaryRevision.list", {"employee_id": employee_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "salary_structure_view")
+    own_lines = [row for row in rows if row.get("employee_id") == employee_id]
+    own_revisions = [rev for rev in revisions if rev.get("employee_id") == employee_id]
+    return explain.structure_view(employee=employee, structure=structure, line_count=len(own_lines),
+                                  revisions=own_revisions)
+
+
+async def run_reimbursement_status(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    jurisdiction = task.input["jurisdiction"]
+    filters = {key: task.input[key] for key in ("employee_id", "status") if task.input.get(key)}
+    claims, problem = await _fetch_all(ctx, "ReimbursementClaim.list", filters, jurisdiction)
+    if problem:
+        return _with_tool(problem, "reimbursement_status")
+    claims = [c for c in claims if all(c.get(key) == value for key, value in filters.items())]
+    claims.sort(key=lambda c: str(c.get("claim_month") or ""), reverse=True)
+    return explain.reimbursement_report(claims)
+
+
 def _refusal(existing: list[dict[str, Any]], message: str) -> dict[str, Any]:
     return {"error": True, "tool": "PayRun.run_payroll", "code": "run_exists_not_recalculable",
             "message": message, "existing": [_run_summary(run) for run in existing]}
@@ -569,6 +685,10 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "statutory_dues": run_statutory_dues,
     "lifecycle_report": run_lifecycle_report,
     "salary_whatif": run_salary_whatif,
+    "payslip_breakdown": run_payslip_breakdown,
+    "explain_pay_change": run_explain_pay_change,
+    "salary_structure_view": run_salary_structure_view,
+    "reimbursement_status": run_reimbursement_status,
     "offcycle_report": run_offcycle_report,
     "create_off_cycle_run": run_create_off_cycle_run,
     "run_payroll": run_run_payroll,
