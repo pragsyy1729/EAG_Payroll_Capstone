@@ -8,6 +8,7 @@ labelled an estimate. TDS is scaled in proportion to gross because the platform 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .cost_report import _finite as finite
@@ -15,6 +16,7 @@ from .cost_report import _finite as finite
 MONEY_TOLERANCE = 1.0
 ESTIMATE_NOTE = "Estimate only. Nothing was written to AgentSwitch."
 _CARRIED = ("loan_deduction", "other_deductions", "lwf_employee")
+_ONE_OFF = re.compile(r"overtime|bonus|arrear|incentive", re.IGNORECASE)
 _COMPARED = ("epf_employee", "esi_employee", "esi_employer", "professional_tax", "employer_contribution")
 
 
@@ -73,9 +75,8 @@ def pick_basis_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _config(configs: dict[str, list[dict[str, Any]]], name: str) -> dict[str, Any] | None:
-    rows = configs.get(name) or []
-    active = [row for row in rows if row.get("is_active")]
-    return (active or rows or [None])[0]
+    """The active configuration row, or None: an inactive row is never used as if it were active."""
+    return next((row for row in configs.get(name) or [] if row.get("is_active")), None)
 
 
 def _round(value: float) -> float:
@@ -185,7 +186,7 @@ def baseline_differences(rows: list[dict[str, Any]], configs: dict[str, list[dic
 def estimate(*, row: dict[str, Any], change: dict[str, float], configs: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     components, gross0, basic0, tds0, carried = _inputs(row)
     if "percent_raise" in change:
-        gross1 = gross0 * (1 + change["percent_raise"] / 100)
+        gross1 = _round(gross0 * (1 + change["percent_raise"] / 100))   # rounded: float noise must not cross a ceiling
     else:
         gross1 = change["new_monthly_gross"]
     factor = gross1 / gross0
@@ -201,6 +202,10 @@ def estimate(*, row: dict[str, Any], change: dict[str, float], configs: dict[str
         "ESI applies only while gross is at or below the ESI wage ceiling.",
         "Professional tax uses the monthly slab for the gross; the annual cap is not applied.",
     ]
+    oneoffs = [c["component_name"] for c in components if _ONE_OFF.search(c["component_name"])]
+    if oneoffs:
+        assumptions.append(f"The basis line includes {', '.join(oneoffs)}, which may not recur; it is scaled "
+                           "with the rest of the pay.")
     if tds0 == 0 and factor > 1:
         assumptions.append("TDS is currently 0 and is kept at 0; a raise could start TDS.")
     return {"estimate": True, "written": False, "note": ESTIMATE_NOTE,
