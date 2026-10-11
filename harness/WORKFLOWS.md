@@ -112,10 +112,13 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
   state income tax, Social Security, Medicare) from slip deduction components;
   employer-side US taxes, FUTA and SUTA are reported as unavailable because the
   data does not hold them. Also reported (all labelled "standard calendar, not from AgentSwitch"): India Form 24Q for the
-  quarter of the period end (due 31 July, 31 October, 31 January or 31 May) and Form 16 (by 15 June after the
+  quarter of the pay date, or of the period end when the run has no usable pay date (due 31 July, 31 October, 31 January
+  or 31 May) and Form 16 (by 15 June after the
   financial year); US Form 941 for the quarter (30 April, 31 July, 31 October, 31 January), Form 940 and W-2
-  (31 January after the year), with a US weekend due date moved to the next Monday and federal holidays not
-  applied. Professional tax and LWF show the tenant's state and cycle (Maharashtra, monthly and half-yearly) with
+  (31 January after the year), with a US weekend due date moved to the next Monday; federal holidays and the
+  10-day extension for timely deposits are not applied. The pay date decides the quarter and year because tax
+  follows when wages are paid; live, nearly every run is paid on the 1st of the following month, so a March run
+  paid 1 April belongs to Q1 and the next financial year. Professional tax and LWF show the tenant's state and cycle (Maharashtra, monthly and half-yearly) with
   no due date asserted, and US tax deposits (monthly by the 15th, or semiweekly, by a schedule not in AgentSwitch)
   are not dated either: the result says that is the complete answer for those items. Live (2026-10-11): India
   August gives Form 24Q 2026-10-31 (a Saturday; no India roll is applied) and Form 16 2027-06-15; US August gives

@@ -129,3 +129,42 @@ def test_the_report_says_that_unasserted_dates_are_the_complete_answer_not_missi
         assert "not missing evidence" in result["note"] and "deliberately not asserted" in result["note"]
     assert "calculated" not in statutory.build_statutory(run=india_run(), rows=[slip(net_pay=0)], jurisdiction="IN",
                                                           configs=CONFIGS, today=TODAY).get("note", "")
+
+
+def test_the_return_calendar_follows_the_pay_date_when_it_crosses_a_boundary():
+    """Review finding: TDS and US payroll tax follow when wages are paid; a period ending 31 March but paid
+    3 April belongs to Q1 and the next financial year."""
+    q1 = statutory.india_returns("2026-03-31", TODAY, pay_date="2026-04-03")
+    assert q1["form_24q"]["date"] == "2026-07-31" and "Q1" in q1["form_24q"]["rule"]
+    assert q1["form_16"]["date"] == "2027-06-15" and "2026-04-03" in q1["form_24q"]["rule"]
+    assert statutory.india_returns("2026-06-30", TODAY, pay_date="2026-07-03")["form_24q"]["date"] == "2026-10-31"
+    us = statutory.us_returns("2026-12-28", TODAY, pay_date="2027-01-03")
+    assert us["form_941"]["date"] == "2027-04-30" and us["form_940"]["date"] == "2028-01-31"
+    assert us["form_w2"]["date"] == "2028-01-31" and "pay date 2027-01-03" in us["form_941"]["rule"]
+
+
+def test_without_a_usable_pay_date_the_period_end_is_used_and_the_rule_says_so():
+    for pay_date in (None, "", "soon", "1999-01-01"):
+        result = statutory.india_returns("2026-03-31", TODAY, pay_date=pay_date)
+        assert result["form_24q"]["date"] == "2026-05-31" and "period end 2026-03-31" in result["form_24q"]["rule"]
+        assert "no usable pay date" in result["form_24q"]["rule"]
+    assert "period end 2026-09-30" in statutory.us_returns("2026-09-30", TODAY)["form_941"]["rule"]
+
+
+def test_build_statutory_passes_the_runs_pay_date():
+    run = {**india_run(), "pay_period_end": "2026-03-31", "pay_date": "2026-04-03"}
+    result = statutory.build_statutory(run=run, rows=[slip(epf_employee=100)], jurisdiction="IN", configs=CONFIGS, today=TODAY)
+    assert result["returns"]["form_24q"]["date"] == "2026-07-31"
+
+
+def test_the_us_basis_states_the_extension_it_does_not_apply():
+    """Review finding: the 10-day extension for timely deposits is not applied, and the basis must say so."""
+    assert "10-day extension" in statutory.US_BASIS and "not applied" in statutory.US_BASIS
+    assert "10-day extension" in statutory.us_returns("2026-09-30", TODAY)["form_941"]["basis"]
+
+
+def test_the_note_says_the_obligation_exists_and_the_dates_are_the_unextended_standard_ones():
+    """Review finding: the note could be read as 'nothing more is needed'."""
+    note = statutory.build_statutory(run=india_run(), rows=[slip(epf_employee=100)], jurisdiction="IN",
+                                     configs=CONFIGS, today=TODAY)["note"]
+    assert "the obligation exists" in note and "unextended" in note and "not missing evidence" in note
