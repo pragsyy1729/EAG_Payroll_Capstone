@@ -19,10 +19,10 @@ RUN = {"id": "R1", "status": "draft", "pay_period_start": START, "pay_period_end
 
 class FakeAgentSwitch:
     def __init__(self, *, run=RUN, lines=(), employees=(), leave=(), attendance_dates=(), lop_rows=None,
-                 bad_dates=(), denied=()):
+                 bad_dates=(), denied=(), bad_lop=False):
         self.run, self.lines, self.employees, self.leave = run, list(lines), list(employees), list(leave)
         self.attendance_dates, self.lop_rows = set(attendance_dates), lop_rows or {}
-        self.bad_dates, self.denied, self.calls = set(bad_dates), set(denied), []
+        self.bad_dates, self.denied, self.calls, self.bad_lop = set(bad_dates), set(denied), [], bad_lop
 
     async def call_tool(self, name, arguments=None, *, jurisdiction):
         arguments = arguments or {}
@@ -46,7 +46,11 @@ class FakeAgentSwitch:
             return {"data": [{}] * min(count, arguments.get("limit", 10)), "total": count}
         if arguments.get("is_lop") is not True:        # the live platform rejects 1, "true" and "1": a real boolean only
             raise AgentSwitchToolError(name, -32602, "Invalid tool arguments.")
-        return self._page(self.lop_rows.get(arguments["employee_id"], []), arguments)     # one employee's LOP rows
+        if self.bad_lop:
+            raise AgentSwitchToolError(name, -32000, "boom")
+        rows = (self.lop_rows.get(arguments["employee_id"], []) if "employee_id" in arguments
+                else [row for group in self.lop_rows.values() for row in group])     # every employee's LOP rows
+        return self._page(rows, arguments)
 
     @staticmethod
     def _page(rows, arguments):
@@ -90,21 +94,37 @@ async def test_an_uncalculated_run_still_checks_attendance_and_leave_and_skips_t
     assert [f["severity"] for f in result["findings"] if f["check"] == "attendance_coverage"] == ["high"]
 
 
-async def test_attendance_is_counted_once_per_day_and_lop_rows_only_for_candidates():
+async def test_attendance_is_counted_once_per_day_and_all_lop_rows_are_read_in_one_fetch():
     lines = [{**line("E1", lop=0.0), "payrun_id": "R1"}, {**line("E2", lop=1.0), "payrun_id": "R1"}]
     fake = FakeAgentSwitch(lines=lines, employees=[person("E1"), person("E2")], attendance_dates=all_days())
     await readiness(fake)
     day_calls = [a for n, a in fake.calls if n == "Attendance.list" and "date" in a]
     assert sorted(a["date"] for a in day_calls) == all_days() and all(a["limit"] == 1 for a in day_calls)
-    lop_calls = [a for n, a in fake.calls if n == "Attendance.list" and "employee_id" in a]
-    assert [a["employee_id"] for a in lop_calls] == ["E2"] and lop_calls[0]["is_lop"] is True
+    lop_calls = [a for n, a in fake.calls if n == "Attendance.list" and "date" not in a]
+    assert lop_calls and all(a["is_lop"] is True and "employee_id" not in a for a in lop_calls)    # not one fetch per employee
 
 
-async def test_candidates_beyond_the_cap_are_counted_not_silently_dropped():
-    lines = [{**line(f"E{i}", lop=1.0), "payrun_id": "R1"} for i in range(30)]
-    people = [person(f"E{i}") for i in range(30)]
-    result = await readiness(FakeAgentSwitch(lines=lines, employees=people, attendance_dates=all_days()))
-    assert result["lop_candidates_not_checked"] == 5
+async def test_every_line_is_checked_for_lop_with_no_cap_and_the_costly_direction_is_seen():
+    """Review finding: only lines with LOP days (the first 25) were examined; LOP rows on a line with no LOP
+    deducted were never seen."""
+    lines = [{**line(f"E{i}", lop=0.0), "payrun_id": "R1"} for i in range(40)]
+    people = [person(f"E{i}") for i in range(40)]
+    rows = {"E33": [{"employee_id": "E33", "date": "2026-09-03", "is_lop": 1}]}
+    result = await readiness(FakeAgentSwitch(lines=lines, employees=people, attendance_dates=all_days(), lop_rows=rows))
+    assert result["checks"]["lop_mismatch"]["considered"] == 40
+    mismatch = [f for f in result["findings"] if f["check"] == "lop_mismatch"]
+    assert [(f["employee_id"], f["evidence"]["line_lop_days"], f["evidence"]["attendance_lop_days"]) for f in mismatch] == [
+        ("E33", 0.0, 1)]
+    assert "lop_candidates_not_checked" not in result
+
+
+async def test_an_unreadable_lop_fetch_skips_only_that_check_and_says_why():
+    lines = [{**line("E1"), "payrun_id": "R1"}]
+    result = await readiness(FakeAgentSwitch(lines=lines, employees=[person("E1")], attendance_dates=all_days(),
+                                             bad_lop=True))
+    assert "error" not in result and result["calculated"] is True
+    assert result["checks"]["lop_mismatch"]["ran"] is False and "could not be read" in result["checks"]["lop_mismatch"]["skipped_reason"]
+    assert result["checks"]["proration"]["ran"] is True and "skipped LOP mismatch" in result["summary"]
 
 
 async def test_one_unreadable_day_is_reported_not_treated_as_empty():
@@ -142,4 +162,4 @@ async def test_the_worker_reports_what_each_check_considered_even_when_nothing_w
     assert result["checks"]["pending_leave"] == {"ran": True, "considered": 2,
                                                  "unit": "leave applications (pending or draft)", "findings": 0}
     assert result["checks"]["attendance_coverage"]["considered"] == 30
-    assert result["checks"]["lop_mismatch"]["considered"] == 1 and result["checks"]["proration"]["considered"] == 2
+    assert result["checks"]["lop_mismatch"]["considered"] == 2 and result["checks"]["proration"]["considered"] == 2

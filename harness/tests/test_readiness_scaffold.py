@@ -141,8 +141,7 @@ def test_assemble_numbers_sorts_and_caps_the_findings():
     high = {"check": "attendance_coverage", "severity": "high", "employee_id": None, "employee_name": None,
             "message": "m", "evidence": {}}
     result = readiness.assemble(run={"id": "R", "status": "draft", "pay_period_start": START, "pay_period_end": END},
-                                calculated=True, findings=[*many, high], coverage={}, basic={}, skipped=[],
-                                candidates_skipped=0)
+                                calculated=True, findings=[*many, high], coverage={}, basic={}, skipped=[])
     assert result["findings"][0]["severity"] == "high" and result["findings"][0]["id"] == "F-001"
     assert len(result["findings"]) == readiness.MAX_FINDINGS and result["truncated"] is True
     assert result["counts"]["by_severity"] == {"high": 1, "info": 50}
@@ -161,9 +160,9 @@ def test_a_joiner_whose_working_days_already_start_at_joining_is_prorated_not_fl
 
 
 def test_a_prorated_line_is_judged_against_the_periods_working_days_not_its_own():
-    people = {"E1": person("E1"), "E2": person("E2")}
-    rows = [line("E1", days=3, working=3), line("E2", days=27, working=27)]            # E1 has no joining date in the period
-    found = readiness.proration(rows, people, "2026-07-01", "2026-07-31")
+    people = {"E1": person("E1"), "E2": person("E2"), "E3": person("E3")}
+    rows = [line("E1", days=3, working=3), line("E2", days=27, working=27), line("E3", days=27, working=27)]
+    found = readiness.proration(rows, people, "2026-07-01", "2026-07-31")      # E1 has no joining date in the period
     assert [(f["employee_id"], f["severity"]) for f in found] == [("E1", "info")]
 
 
@@ -172,13 +171,66 @@ def test_the_report_states_which_checks_ran_and_how_much_each_considered():
     called the report 'missing leave'. A check that finds nothing must still leave a trace."""
     run = {"id": "R", "status": "draft", "pay_period_start": START, "pay_period_end": END}
     result = readiness.assemble(run=run, calculated=True, findings=[], coverage={}, basic={"below_50_percent": 7},
-                                skipped=[], candidates_skipped=0,
-                                considered={"attendance_coverage": 30, "pending_leave": 4, "proration": 62, "lop_mismatch": 3})
+                                skipped=[],
+                                considered={"attendance_coverage": 30, "pending_leave": 4, "proration": 62, "lop_mismatch": 62})
     checks = result["checks"]
     assert checks["pending_leave"] == {"ran": True, "considered": 4, "unit": "leave applications (pending or draft)", "findings": 0}
     assert checks["attendance_coverage"]["unit"] == "calendar days" and checks["proration"]["unit"] == "pay lines"
     assert checks["attendance_coverage"]["considered"] == 30 and checks["basic_share"]["findings"] == 7
     assert "pending leave" in result["summary"] and "0 findings" in result["summary"]
     skipped = readiness.assemble(run=run, calculated=False, findings=[], coverage={}, basic={}, skipped=[],
-                                 candidates_skipped=0, considered={"pending_leave": 2})
+                                 considered={"pending_leave": 2})
     assert skipped["checks"]["proration"]["ran"] is False and skipped["checks"]["pending_leave"]["ran"] is True
+
+
+def test_a_run_without_a_shared_working_day_count_cannot_judge_proration_and_says_so():
+    """Review finding: a one-line run, or two joiners, got a confident HIGH 'not prorated' on lines that were
+    correctly prorated, because the baseline was just the largest working_days present."""
+    people = {"E1": person("E1", joined="2026-07-29"), "E2": person("E2", joined="2026-07-10")}
+    one = readiness.proration([line("E1", days=3, working=3)], people, "2026-07-01", "2026-07-31")
+    assert [(f["severity"], f["check"]) for f in one] == [("info", "proration")] and "could not be judged" in one[0]["message"]
+    two = readiness.proration([line("E1", days=3, working=3), line("E2", days=16, working=16)], people,
+                              "2026-07-01", "2026-07-31")
+    assert [f["severity"] for f in two] == ["info"]
+    nobody_to_judge = readiness.proration([line("E3", days=26, working=26)],
+                                          {"E3": person("E3")}, "2026-07-01", "2026-07-31")
+    assert nobody_to_judge == []                     # no joiner or leaver in the period: nothing to say about the baseline
+
+
+def test_one_data_error_in_working_days_does_not_move_the_baseline():
+    people = {"E1": person("E1", joined="2026-07-29"), "E2": person("E2"), "E3": person("E3"), "E4": person("E4"),
+              "E5": person("E5")}
+    rows = [line("E1", days=27, working=27), line("E2", days=27, working=27), line("E3", days=27, working=27),
+            line("E4", days=27, working=27), line("E5", days=260, working=260)]       # E5's 260 is a data error
+    found = readiness.proration(rows, people, "2026-07-01", "2026-07-31")
+    assert [(f["employee_id"], f["severity"]) for f in found] == [("E1", "high")]     # the unprorated joiner is still caught
+
+
+def test_the_summary_does_not_say_zero_findings_when_basic_share_flags_most_lines():
+    """Review finding: 60 lines below 50% still gave '0 findings in total', which a model reads as a clean run."""
+    run = {"id": "R", "status": "draft", "pay_period_start": START, "pay_period_end": END}
+    result = readiness.assemble(run=run, calculated=True, findings=[], coverage={}, basic={"below_50_percent": 60},
+                                skipped=[])
+    assert "plus 60 lines with Basic below 50%" in result["summary"] and "see basic_share" in result["summary"]
+    clean = readiness.assemble(run=run, calculated=True, findings=[], coverage={}, basic={"below_50_percent": 0}, skipped=[])
+    assert "plus" not in clean["summary"] and "0 findings" in clean["summary"]
+
+
+def test_a_skipped_check_is_shown_as_not_run_with_its_reason():
+    run = {"id": "R", "status": "draft", "pay_period_start": START, "pay_period_end": END}
+    result = readiness.assemble(run=run, calculated=True, findings=[], coverage={}, basic={}, considered={},
+                                skipped=[{"check": "lop_mismatch", "reason": "the LOP rows could not be read"}])
+    assert result["checks"]["lop_mismatch"] == {"ran": False, "skipped_reason": "the LOP rows could not be read"}
+    assert "skipped" in result["summary"] and "LOP mismatch" in result["summary"]
+
+
+def test_lop_is_compared_in_both_directions_for_every_line():
+    """Review finding: only lines with lop_days > 0 were examined, so LOP rows on a line with no LOP deducted
+    (the costly direction) were never seen."""
+    lop = [{"employee_id": "E1", "date": "2026-09-03", "is_lop": 1}, {"employee_id": "E1", "date": "2026-09-04", "is_lop": 1},
+           {"employee_id": "E2", "date": "2026-09-05", "is_lop": 1}, {"employee_id": "E2", "date": "2026-08-30", "is_lop": 1},
+           {"employee_id": "E9", "date": "2026-09-05", "is_lop": 1}]
+    rows = [line("E1", lop=0.0), line("E2", lop=1.0), line("E3", lop=0.0)]
+    found = readiness.lop_mismatches(rows, lop, START, END)
+    assert [(f["employee_id"], f["evidence"]) for f in found] == [
+        ("E1", {"line_lop_days": 0.0, "attendance_lop_days": 2})]

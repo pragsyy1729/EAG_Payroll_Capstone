@@ -347,7 +347,7 @@ new work is read wrappers plus Python computation.
       live full-month pay lines with 0 differences. Not done: US, TDS beyond a
       proportional estimate, CTC input, multi-employee scenarios.
 - [x] `payroll_readiness` (attendance coverage, pending leave, proration, LOP mismatch, Basic share),
-      a separate capability from `pre_payroll_scan`. Open: LOP candidates beyond 25 are counted, not checked.
+      a separate capability from `pre_payroll_scan`. LOP is read in one fetch and compared for every line, both directions.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
