@@ -107,3 +107,19 @@ def test_the_capabilities_expose_the_new_arguments():
     assert "year_on_year" in arguments and "with_components" in arguments
     assert registry.validate("payroll_cost_report", {"jurisdiction": "IN", "payrun_id": "R", "year_on_year": True},
                              known_values={"R"})["year_on_year"] is True
+
+
+async def test_a_cancelled_or_non_regular_comparison_run_is_refused_as_a_baseline():
+    """Found live: an explicit comparison run bypassed the rule that auto-chosen baselines are regular and not cancelled."""
+    fake = fixture()
+    fake.runs["CANCELLED"] = month("CANCELLED", "2025-08-01", "2025-08-31", status="cancelled")
+    fake.runs["BONUS"] = month("BONUS", "2026-08-15", "2026-08-31", run_type="bonus")
+    fake.slips["CANCELLED"], fake.slips["BONUS"] = slips_for("CANCELLED"), slips_for("BONUS")
+    for bad, word in (("CANCELLED", "cancelled"), ("BONUS", "regular")):
+        result = await report(fake, compare_to=bad)
+        assert result["variance"] is None, bad
+        reasons = [s["reason"] for s in result["skipped"] if s["what"] == "variance"]
+        assert reasons and word in reasons[0] and "comparison run" in reasons[0], bad
+    assert not any(a.get("payrun_id") in ("CANCELLED", "BONUS") for n, a in fake.calls if n == "PayRunEmployee.list")
+    ok = await report(fake, compare_to="PREV")
+    assert ok["variance"]["compared_to"] == "PREV"

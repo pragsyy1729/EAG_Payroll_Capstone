@@ -88,9 +88,21 @@ Design: `docs/superpowers/specs/2026-09-30-pre-payroll-scan-design.md`.
 Status: **partial**. `payroll_cost_report` (read-only) covers total cost for a
 run by department or work location, and month-over-month variance: change in
 totals and per group, joiners and leavers by employee id, and the overtime
-change. It also checks the PayRun header totals against the slip sums. Not
-built: payroll register, year-on-year, allowance-level detail, cost-centre
-tags (`PayrollReportingTag`), budgets, and the US tenant. Department and
+change. It also checks the PayRun header totals against the slip sums.
+`payroll_register` lists one line per employee for a calculated run (days, LOP,
+gross, deductions, reimbursements, net, capped at 200 lines), with totals and the
+header check. `with_components` totals each earning and deduction component (Basic,
+HRA, allowances, overtime, EPF, TDS) with its share of gross; live, July's Basic total
+(1,182,633) equals a hand sum over the 62 raw lines. `year_on_year` compares with the
+regular run for the same month a year earlier and never falls back to last month;
+live, only September 2026 (still a draft) has such a partner (September 2025), so
+August honestly reports "no regular run for the same month last year" (the only
+August 2025 run is the cancelled `PRUN-2026-00015`). A cancelled run's report carries
+a caveat, and a cancelled or non-regular run is refused as an explicit comparison
+baseline; before that fix the real planner presented the cancelled run's total as
+"August last year". Not built: cost-centre tags (`PayrollReportingTag`: 8 tag
+definitions are readable but no employee assignment has been seen), budgets (no tool),
+and the US tenant. Department and
 location are each employee's *current* ones, not as of the run's date.
 Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
 

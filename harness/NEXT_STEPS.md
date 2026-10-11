@@ -346,6 +346,8 @@ new work is read wrappers plus Python computation.
 - [x] What-if salary estimator (`salary_whatif`, India, read-only): checked against 492
       live full-month pay lines with 0 differences. Not done: US, TDS beyond a
       proportional estimate, CTC input, multi-employee scenarios.
+- [x] Reporting additions: `payroll_register`, `with_components`, `year_on_year`; a cancelled run is caveated
+      and refused as a comparison baseline. Year on year cannot be shown live until September 2026 is calculated.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
