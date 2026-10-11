@@ -228,8 +228,11 @@ def build_register(*, run: dict[str, Any], rows: list[dict[str, Any]]) -> dict[s
               "total_deductions": _finite(row.get("total_deductions")),
               "reimbursements": _finite(row.get("reimbursements")), "net": _finite(row.get("net_pay"))}
              for row in sorted(rows, key=lambda r: (str(r.get("employee_name") or ""), str(r.get("employee_id"))))]
-    return {**head, "calculated": True, "totals": totals, "consistency": check_header(run, totals),
-            "lines": lines[:MAX_REGISTER], "lines_total": len(lines), "truncated": len(lines) > MAX_REGISTER}
+    result = {**head, "calculated": True, "totals": totals, "consistency": check_header(run, totals),
+              "lines": lines[:MAX_REGISTER], "lines_total": len(lines), "truncated": len(lines) > MAX_REGISTER}
+    if run.get("status") == "cancelled":
+        result["caveats"] = [{"what": "run", "reason": "this run is cancelled; its figures are not payroll that was paid"}]
+    return result
 
 
 def same_month_last_year(run: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -240,11 +243,12 @@ def same_month_last_year(run: dict[str, Any], runs: list[dict[str, Any]]) -> dic
     except ValueError:
         return None
     wanted = f"{year - 1:04d}-{month:02d}"
-    for candidate in runs:
-        if (str(candidate.get("pay_period_start") or "")[:7] == wanted and candidate.get("id") != run.get("id")
-                and candidate.get("run_type") in (None, "regular") and candidate.get("status") != "cancelled"):
-            return candidate
-    return None
+    matches = [candidate for candidate in runs
+               if str(candidate.get("pay_period_start") or "")[:7] == wanted and candidate.get("id") != run.get("id")
+               and candidate.get("run_type") in (None, "regular") and candidate.get("status") != "cancelled"]
+    # A paid run beats an unpaid one, then the newest wins, so the answer does not depend on list order.
+    return max(matches, key=lambda c: (c.get("status") == "paid", str(c.get("created_at") or ""), str(c.get("id"))),
+               default=None)
 
 
 def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: list[dict[str, Any]],
@@ -276,6 +280,9 @@ def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: 
               "variance": variance, "skipped": skipped}
     if with_components:
         result["components"] = component_totals(rows)
+        gross = summary["totals"]["gross_pay"]
+        result["components"]["gross_pay_total"] = gross
+        result["components"]["difference_from_gross_pay"] = round(result["components"]["earnings_total"] - gross, 2)
     if run.get("status") == "cancelled":
         result["caveats"] = [{"what": "run", "reason": "this run is cancelled; its figures are not payroll that was paid"}]
     return result

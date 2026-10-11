@@ -101,3 +101,32 @@ def test_a_cancelled_run_is_reported_with_a_caveat_and_a_normal_run_has_none():
     cancelled = cost_report.build_report(run={**RUN, "status": "cancelled"}, rows=ROWS, employees=[], group_by="none")
     assert cancelled["caveats"] == [{"what": "run", "reason": "this run is cancelled; its figures are not payroll that was paid"}]
     assert "caveats" not in cost_report.build_report(run=RUN, rows=ROWS, employees=[], group_by="none")
+
+
+def test_same_month_last_year_prefers_a_paid_run_and_does_not_depend_on_list_order():
+    """Review finding: the first match in list order won, so a draft listed first hid a paid run."""
+    current = run("NOW", "2026-09-01")
+    draft = run("D", "2025-09-01", status="draft")
+    paid_old = run("P1", "2025-09-01", created_at="2025-10-01T00:00:00")
+    paid_new = run("P2", "2025-09-01", created_at="2025-10-05T00:00:00")
+    for order in ([current, draft, paid_old], [current, paid_old, draft], [paid_old, draft, current]):
+        assert cost_report.same_month_last_year(current, order)["id"] == "P1"
+    assert cost_report.same_month_last_year(current, [current, paid_old, paid_new])["id"] == "P2"      # newest paid wins
+    assert cost_report.same_month_last_year(current, [current, paid_new, paid_old])["id"] == "P2"      # whatever the order
+    assert cost_report.same_month_last_year(current, [current, draft])["id"] == "D"                    # only an unpaid one exists
+
+
+def test_a_cancelled_runs_register_carries_the_same_caveat_as_its_report():
+    """Review finding: the live failure (a cancelled run presented as paid) could recur through the register."""
+    cancelled = cost_report.build_register(run={**RUN, "status": "cancelled"}, rows=ROWS)
+    assert cancelled["caveats"] == [{"what": "run", "reason": "this run is cancelled; its figures are not payroll that was paid"}]
+    assert "caveats" not in cost_report.build_register(run=RUN, rows=ROWS)
+
+
+def test_component_totals_say_how_far_they_are_from_the_runs_gross_pay():
+    """Review finding: shares divide by the component sum, so a run whose components do not add up to gross looked complete."""
+    matching = cost_report.build_report(run=RUN, rows=ROWS, employees=[], group_by="none", with_components=True)
+    assert matching["components"]["gross_pay_total"] == 70000.0 and matching["components"]["difference_from_gross_pay"] == 0.0
+    short = [ROWS[0], {**ROWS[1], "earnings": [comp("Basic", 20000.0)]}]               # 20000 of the second line's 40000 gross
+    off = cost_report.build_report(run=RUN, rows=short, employees=[], group_by="none", with_components=True)
+    assert off["components"]["difference_from_gross_pay"] == -20000.0
