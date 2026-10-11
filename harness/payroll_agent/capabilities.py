@@ -315,6 +315,23 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "salary_whatif",
+            "Estimate what one India employee's pay would be if their salary changed, without changing "
+            "anything. Give exactly one of `percent_raise` (for example 10 for a 10% raise, negative for a "
+            "cut) or `new_monthly_gross`. It scales the employee's latest full-month pay line and recomputes "
+            "EPF, ESI and professional tax from the tenant's own configuration; TDS is a rough proportional "
+            "estimate. The result is labelled an estimate and lists its assumptions: always say it is an "
+            "estimate and name the assumptions. Read-only. India only. Use an `employee_id` taken from an "
+            "earlier outcome (for example `list_employees`).",
+            {"jurisdiction": _JURISDICTION,
+             "employee_id": string("The employee to estimate for.", maximum=200, format="id"),
+             "percent_raise": Argument("number", "Percentage change to gross pay; negative for a cut.",
+                                       required=False, minimum=-99, maximum=1000),
+             "new_monthly_gross": Argument("number", "The new full-month gross pay.", required=False,
+                                           minimum=1, maximum=100000000)},
+            families=("evidence",),
+        ),
+        Capability(
             "run_payroll",
             "Open (or reuse) the pay run for a month and calculate draft salary slips. "
             "This is the real payroll calculation -- a mutation, not a read. It never "
