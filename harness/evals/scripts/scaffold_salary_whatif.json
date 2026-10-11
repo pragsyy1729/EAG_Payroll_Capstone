@@ -1,0 +1,16 @@
+{
+  "name": "scaffold_salary_whatif",
+  "note": "Scaffold only. Estimate a 10% raise for one employee. Read-only.",
+  "steps": [
+    {"reply": {"add": [{"id": "whatif", "capability": "salary_whatif",
+                        "arguments": {"jurisdiction": "IN", "employee_id": "f8e8a973-1c34-4025-ae55-fbe728ba7b35",
+                                      "percent_raise": 10}, "depends_on": []}],
+               "cancel": [], "finish": false, "reason": "estimate the raise"}},
+    {"reply": {"add": [{"id": "answer", "capability": "answer_with_evidence",
+                        "arguments": {"query": "What would this employee's pay be after a 10% raise?"},
+                        "depends_on": ["whatif"]}],
+               "cancel": [], "finish": false, "reason": "estimate finished; answer from it"}},
+    {"reply": {"ready": true, "missing": [], "reason": "the estimate is present"}},
+    {"reply": "Scripted answer: see the salary_whatif evidence."}
+  ]
+}

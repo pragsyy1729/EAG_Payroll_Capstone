@@ -17,8 +17,29 @@ relying on it. Status: **built** (live-verified), **partial**, **todo**.
 | Why is my net pay lower than last month? (Ramesh flow) | `PayRunEmployee`, `SalarySlip`, `Attendance`, `LeaveApplication`, `EmployeeLoan` | partial: planner flow exists, never completed live |
 | What are all these deductions? Show my gross-to-net breakdown | `SalarySlip`, `PayRunEmployee`, `SalaryComponent` | todo |
 | Why did my TDS or PF change? | `SalarySlip`, `TaxConfig`, `EPFConfig`, `InvestmentDeclaration` | todo |
-| How is my Basic/HRA/Special Allowance split calculated? | `SalaryStructure`, `SalaryTemplate`, `SalaryComponent` | todo |
+| How is my Basic/HRA/Special Allowance split calculated? ("Explain Meera More's salary structure") | `SalaryStructure`, `SalaryTemplate`, `SalaryComponent` | todo; reference case below |
 | Where is my reimbursement? Why partly approved? | `ReimbursementClaim` | todo |
+
+**Reference case: "Explain Meera More's salary structure" (checked on the live India tenant).**
+The correct answer is that she has no usable structure, not a component breakdown.
+
+- Her profile (`EMP-2026-00100`) has CTC 148,814.47 a year (12,401.21 a month) and a
+  `salary_structure_id` that points to a structure owned by another employee (Anita
+  Bhalerao, "Anita — revised 2026-10-01", 604,800 a year). Those Basic, HRA and Special
+  Allowance figures are Anita's and must not be reported as hers.
+- No structure has her `employee_id` (0 of 6), she has no pay lines (0 of 844) and no
+  salary slips, and her two revisions carry placeholder components ("C-Clamp 12133") that
+  match neither each other nor her CTC.
+- Other problems on the same record: designation HR Manager on an intern; exit date
+  2026-04-10 with reason "death" while status is suspended; probation end before the joining
+  date; city and state that disagree; a work location whose own city and state differ.
+- Rule for the capability, when built: show structure figures only if the structure's
+  `employee_id` matches the employee or the structure is a grade template, otherwise say
+  what is missing. A harness answer that followed this rule was better than a first answer
+  that tabulated the other employee's components and computed a net pay she was never paid.
+- Candidate AgentSwitch issues, not filed: the profile pointing at another employee's
+  structure, and revision `REV-2026-00047` with status pending approval but approval
+  status rejected.
 
 ## B. Run lifecycle (admin actions, guarded)
 
@@ -121,6 +142,26 @@ Design: `docs/superpowers/specs/2026-10-03-payroll-cost-report-design.md`.
 | Pay this employee extra, skipping approval | bypasses segregation of duties | todo |
 | Run payroll for a month with no attendance data | missing evidence; must say what is missing | todo |
 | Generate a bank file or disburse | no disbursement tool | todo |
+
+## H. What-if estimates (read-only)
+
+- What would Ramesh's net pay be after a 10% raise? (also: a cut, or a new monthly gross)
+
+Status: **built (India only)**. `salary_whatif` reads the employee's latest full-month pay
+line (`PayRunEmployee`), scales every earning by the same factor, and recomputes employee
+and employer EPF, ESI and professional tax from `EPFConfig`, `ESIConfig` and `PTConfig`.
+TDS is scaled in proportion to gross and is a rough estimate (`TaxConfig` holds no slabs).
+The result is labelled `estimate: true, written: false` and lists its assumptions; nothing
+is written. Exactly one of `percent_raise` or `new_monthly_gross` is accepted; there is no
+CTC input, because CTC does not map to the pay components by a simple sum. No full-month
+line means no basis, and the US tenant is refused (no readable statutory configuration).
+Live answer (Ramesh Barve, 10% raise): gross 26,000 to 28,600; EPF 1,560 to 1,716;
+professional tax 200; net 24,240 to 26,684; employer cost 27,690 to 30,459. The model
+answer called it an estimate and said nothing was changed; it did not always list the
+assumptions (the node result has them).
+Accuracy: run over every live full-month pay line, the calculator reproduces EPF, ESI,
+professional tax and employer contribution on 492 of 492 lines.
+Design: `docs/superpowers/specs/2026-10-11-salary-whatif-design.md`.
 
 ## Scope limits (from the tool catalogue)
 

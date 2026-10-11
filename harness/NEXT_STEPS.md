@@ -343,6 +343,9 @@ new work is read wrappers plus Python computation.
 - [ ] Choose the refusal-task example (something the data can't support or
       the seat isn't permitted to do). The `run_payroll` refusal on a
       pending run is a natural candidate.
+- [x] What-if salary estimator (`salary_whatif`, India, read-only): checked against 492
+      live full-month pay lines with 0 differences. Not done: US, TDS beyond a
+      proportional estimate, CTC input, multi-employee scenarios.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.
