@@ -41,3 +41,7 @@ harness/agentswitch_tools_*.json
 
 # Evaluation run records (raw, may contain tenant data)
 harness/evals/runs/
+
+# AgentSwitch official-run output
+results.json
+results.json.tmp

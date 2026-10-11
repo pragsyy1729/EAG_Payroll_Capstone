@@ -1,0 +1,5 @@
+install = "pip install -r requirements.txt"
+run = "python official_run.py --allow-writes --timeout-minutes 20"
+results = "results.json"
+instances = ["suryodaya"]
+timeout_minutes = 20
