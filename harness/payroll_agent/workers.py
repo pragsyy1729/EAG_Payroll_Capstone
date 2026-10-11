@@ -307,7 +307,7 @@ async def _run_guarded(ctx: RunContext, task: TaskSpec, action: guarded.Action) 
         if refusal:
             return _refused(action, refusal, before)
         try:
-            result = await _call_tool(ctx, action.tool, {"id": before["id"]}, jurisdiction)
+            result = await _call_tool(ctx, action.tool, {action.id_argument: before["id"]}, jurisdiction)
             if result.get("error"):
                 return result
             after = await _call_tool(ctx, f"{action.entity}.get", {"id": before["id"]}, jurisdiction)

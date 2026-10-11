@@ -1,0 +1,53 @@
+{
+  "name": "scaffold_guarded_recalculate_refusal",
+  "note": "Scaffold only. The July run is paid, so recalculating it must be refused and nothing changes.",
+  "steps": [
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "recalc",
+            "capability": "recalculate_payrun",
+            "arguments": {
+              "jurisdiction": "IN",
+              "reference": "PRUN-2026-00011"
+            },
+            "depends_on": []
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "try to recalculate the paid July run"
+      }
+    },
+    {
+      "reply": {
+        "add": [
+          {
+            "id": "answer",
+            "capability": "answer_with_evidence",
+            "arguments": {
+              "query": "Recalculate the July 2026 payroll."
+            },
+            "depends_on": [
+              "recalc"
+            ]
+          }
+        ],
+        "cancel": [],
+        "finish": false,
+        "reason": "it was refused; report that"
+      }
+    },
+    {
+      "reply": {
+        "ready": true,
+        "missing": [],
+        "reason": "a refusal is ready evidence"
+      }
+    },
+    {
+      "reply": "Scripted answer: the recalculation was not performed; see the refusal in the evidence."
+    }
+  ]
+}
