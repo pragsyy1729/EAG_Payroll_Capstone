@@ -9,12 +9,14 @@ The workers in ``workers.py`` do the fetching.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .cost_report import _finite as finite
 
 TOLERANCE = 1.0
 MAX_CLAIMS = 50
+_APPROVED_STATUSES = ("approved", "partially_approved", "paid")
 _NET_CHECK = "net_equals_gross_minus_deductions_plus_reimbursements"
 _DRIVERS = ("days_payable", "working_days", "lop_days", "pf_wage", "tax_regime", "taxable_earnings", "tds",
             "loan_deduction", "other_deductions", "overtime_hours", "overtime_pay", "reimbursements", "esi_covered")
@@ -95,17 +97,31 @@ def breakdown(row: dict[str, Any], run: dict[str, Any] | None = None) -> dict[st
             "lop_days": finite(row.get("lop_days")), "tax_regime": row.get("tax_regime")}
 
 
-def _by_name(items: list[dict[str, Any]]) -> dict[str, float]:
-    return {item["name"]: item["amount"] for item in items}
+def _key(name: str) -> str:
+    """One component, however it is spelled: "EPF (Employee)" and "EPF Employee" are the same deduction."""
+    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def _deltas(before: dict[str, float], after: dict[str, float]) -> list[dict[str, Any]]:
+def _keyed(items: list[dict[str, Any]]) -> dict[str, tuple[str, float]]:
+    out: dict[str, tuple[str, float]] = {}
+    for item in items:
+        key = _key(item["name"])
+        out[key] = (item["name"], round(out.get(key, (None, 0.0))[1] + item["amount"], 2))
+    return out
+
+
+def _deltas(before_items: list[dict[str, Any]], after_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    before, after = _keyed(before_items), _keyed(after_items)
     out = []
-    for name in sorted(set(before) | set(after)):
-        b, a = before.get(name), after.get(name)
-        change = round((a or 0.0) - (b or 0.0), 2)
+    for key in sorted(set(before) | set(after), key=lambda k: (after.get(k) or before.get(k))[0]):
+        b, a = before.get(key), after.get(key)
+        change = round((a[1] if a else 0.0) - (b[1] if b else 0.0), 2)
         if change != 0 or b is None or a is None:
-            out.append({"component": name, "before": b, "after": a, "change": change})
+            item = {"component": (a or b)[0], "before": b[1] if b else None, "after": a[1] if a else None,
+                    "change": change}
+            if a and b and a[0] != b[0]:
+                item["renamed_from"] = b[0]
+            out.append(item)
     return out
 
 
@@ -134,8 +150,8 @@ def change(*, to_run: dict[str, Any], to_row: dict[str, Any], from_run: dict[str
         if earn is None or ded is None or None in (gross, total, net):
             raise ExplainError(f"the {label} pay line has unreadable components or totals")
         parts[label] = (earn, ded, gross, total, net)
-    earnings = _deltas(_by_name(parts["from"][0]), _by_name(parts["to"][0]))
-    deductions = _deltas(_by_name(parts["from"][1]), _by_name(parts["to"][1]))
+    earnings = _deltas(parts["from"][0], parts["to"][0])
+    deductions = _deltas(parts["from"][1], parts["to"][1])
     drivers = {name: {"before": from_row.get(name), "after": to_row.get(name)} for name in _DRIVERS
                if name in from_row or name in to_row}
     movers = sorted([{**d, "kind": "earning"} for d in earnings] + [{**d, "kind": "deduction"} for d in deductions],
@@ -212,6 +228,9 @@ def structure_view(*, employee: dict[str, Any], structure: dict[str, Any] | None
         problems.append("there are no pay lines for this employee, so no actual pay can be shown")
     view["revisions"] = _revision_summary(revisions, profile_annual)
     view["problems"] = problems
+    view["note"] = ("This report is complete for a salary-structure question. Having no pay lines, no usable "
+                    "revisions or a structure that is not the employee's is a finding to report, not missing "
+                    "evidence: nothing further needs to be fetched.")
     return view
 
 
@@ -221,10 +240,12 @@ def reimbursement_report(claims: list[dict[str, Any]]) -> dict[str, Any]:
     for item in claims:
         status = item.get("status") or "unknown"
         amount, approved = finite(item.get("amount")), finite(item.get("approved_amount"))
-        group = by_status.setdefault(status, {"count": 0, "claimed": 0.0, "approved": 0.0})
+        group = by_status.setdefault(status, {"count": 0, "claimed": 0.0,
+                                              "approved": 0.0 if status in _APPROVED_STATUSES else None})
         group["count"] += 1
         group["claimed"] = round(group["claimed"] + (amount or 0.0), 2)
-        group["approved"] = round(group["approved"] + (approved or 0.0), 2)
+        if group["approved"] is not None:       # nothing is approved yet on a draft, submitted or rejected claim
+            group["approved"] = round(group["approved"] + (approved or 0.0), 2)
         problems = []
         if amount is None:
             problems.append("the claim amount is missing or not a number")

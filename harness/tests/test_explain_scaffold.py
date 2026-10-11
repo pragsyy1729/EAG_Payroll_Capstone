@@ -194,3 +194,42 @@ def test_an_approved_unpaid_claim_with_no_pay_run_is_normal():
 def test_the_claim_list_is_capped_and_says_so():
     report = explain.reimbursement_report([claim(f"C{i}", "draft") for i in range(60)])
     assert len(report["claims"]) == explain.MAX_CLAIMS and report["truncated"] is True and report["total"] == 60
+
+
+def test_the_same_deduction_under_two_spellings_is_one_component_in_a_comparison():
+    """Found live: July says "EPF (Employee)" and August says "EPF Employee"; a naive diff showed a rise and a fall."""
+    before = {**LINE_A, "deductions": [comp("EPF (Employee)", 1500.0), comp("Professional Tax", 200.0),
+                                       comp("TDS", 1000.0)], "total_deductions": 2700.0, "net_pay": 37300.0}
+    after = {**LINE_A, "id": "LX", "payrun_id": "RB", "deductions": [comp("EPF Employee", 1800.0),
+                                                                      comp("Professional Tax", 200.0), comp("TDS", 1000.0)],
+             "total_deductions": 3000.0}
+    result = explain.change(to_run=RUN_B, to_row=after, from_run=RUN_A, from_row=before)
+    assert [d["component"] for d in result["deductions"]] == ["EPF Employee"]
+    epf = result["deductions"][0]
+    assert (epf["before"], epf["after"], epf["change"]) == (1500.0, 1800.0, 300.0)
+    assert epf["renamed_from"] == "EPF (Employee)"
+
+
+def test_an_unrenamed_component_carries_no_renamed_from():
+    result = explain.change(to_run=RUN_B, to_row=LINE_B, from_run=RUN_A, from_row=LINE_A)
+    assert all("renamed_from" not in d for d in result["earnings"] + result["deductions"])
+
+
+def test_approved_totals_are_only_summed_for_statuses_where_approval_has_happened():
+    """Found live: 81 draft claims carried approved amounts (some far above the claim), summing to 16.9 million."""
+    claims = [claim("C1", "draft", amount=1000.0, approved=5000.0), claim("C2", "submitted"),
+              claim("C3", "approved", approved=800.0), claim("C4", "paid", approved=700.0, paid_in="R1"),
+              claim("C5", "partially_approved", approved=400.0), claim("C6", "rejected")]
+    by_status = explain.reimbursement_report(claims)["by_status"]
+    assert by_status["draft"]["approved"] is None and by_status["submitted"]["approved"] is None
+    assert by_status["rejected"]["approved"] is None
+    assert (by_status["approved"]["approved"], by_status["paid"]["approved"],
+            by_status["partially_approved"]["approved"]) == (800.0, 700.0, 400.0)
+    flagged = {f["number"] for f in explain.reimbursement_report(claims)["flagged"]}
+    assert "C1" in flagged                                  # a draft claim with an approved amount above it is still a data problem
+
+
+def test_the_structure_view_says_it_is_complete_so_a_missing_pay_line_is_not_read_as_missing_evidence():
+    """Found live: the planner read 'no pay lines' as missing evidence, tried to fetch pay lines and stalled."""
+    for result in (view(), view(structure=None), view({**TEMPLATE, "employee_id": "E9"})):
+        assert "complete" in result["note"] and "not missing evidence" in result["note"]

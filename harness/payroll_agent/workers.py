@@ -58,8 +58,25 @@ def _pass_through(task: TaskSpec, *, exclude: tuple[str, ...] = ("jurisdiction",
     return {key: value for key, value in task.input.items() if key not in exclude}
 
 
+def _employee_text(row: dict[str, Any]) -> str:
+    return " ".join(str(row.get(key) or "") for key in ("first_name", "last_name", "email", "number")).lower()
+
+
 async def run_list_employees(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
-    return await _call_tool(ctx, "Employee.list", _pass_through(task), task.input["jurisdiction"])
+    jurisdiction, args = task.input["jurisdiction"], _pass_through(task)
+    words = str(args.get("search") or "").split()
+    if len(words) < 2:
+        return await _call_tool(ctx, "Employee.list", args, jurisdiction)
+    # The platform's search matches one word, not a full name ("Meera More" finds nobody while "Meera" finds
+    # five people), so search by the first word and keep the rows that contain every word.
+    rows, problem = await _fetch_all(ctx, "Employee.list", {"search": words[0]}, jurisdiction)
+    if problem:
+        return problem
+    hits = [row for row in rows if all(word.lower() in _employee_text(row) for word in words)]
+    limit = args.get("limit", 10)
+    return {"data": hits[:limit], "total": len(hits), "limit": limit, "offset": 0,
+            "note": f"the platform search matches one word; searched for {words[0]!r} and kept rows containing "
+                    f"all of {words}"}
 
 
 def _month_of(run: dict[str, Any]) -> str:
@@ -517,8 +534,14 @@ async def run_explain_pay_change(ctx: RunContext, task: TaskSpec) -> dict[str, A
     else:
         to_pair, from_pair = (lines[0], lines[1]) if len(lines) >= 2 else (None, None)
     if to_pair is None or from_pair is None:
-        return _explain_error("explain_pay_change", "need_two_lines",
-                              "two calculated pay lines of regular runs are needed to compare, and they were not found")
+        lacking = [run_id for run_id in (to_id, from_id) if run_id and run_id not in by_run]
+        if lacking:
+            detail = (f"run {', '.join(lacking)} has no calculated pay line for this employee (it may be "
+                      "uncalculated, cancelled or not a regular run); omit the run ids to compare the latest two "
+                      "calculated runs")
+        else:
+            detail = f"only {len(lines)} calculated pay line(s) of regular runs exist for this employee, and two are needed"
+        return _explain_error("explain_pay_change", "need_two_lines", detail)
     try:
         return explain.change(to_run=to_pair[0], to_row=to_pair[1], from_run=from_pair[0], from_row=from_pair[1])
     except explain.ExplainError as problem:
