@@ -135,3 +135,27 @@ def test_baseline_differences_reports_only_lines_the_model_cannot_reproduce():
 def test_a_payslip_the_model_cannot_reproduce_is_flagged_in_the_estimate():
     result = whatif.estimate(row=line(epf_employee=1500.0), change={"percent_raise": 10.0}, configs=CONFIGS)
     assert [d["field"] for d in result["differs_from_payslip"]] == ["epf_employee"]
+
+
+def test_edli_and_admin_follow_the_pay_lines_own_convention():
+    """Found on the live India tenant: 395 of 492 full-month lines carry pf_wage 0 and no EDLI or admin
+    charge, with the 12% employer share alone as employer_contribution. The model follows the basis line."""
+    plain = line(employer_contribution=1800.0, edli_employer=0.0, epf_admin_charges=0.0, pf_wage=0.0)
+    assert whatif.baseline_differences([plain], CONFIGS) == []
+    result = whatif.estimate(row=plain, change={"percent_raise": 10.0}, configs=CONFIGS)
+    assert result["after"]["employer_contribution"] == 1800.0
+    assert result["after"]["employer_cost"] == 45800.0           # 44000 + 1800
+    charged = line(edli_employer=75.0, epf_admin_charges=75.0, pf_wage=15000.0)
+    assert whatif.estimate(row=charged, change={"percent_raise": 10.0},
+                           configs=CONFIGS)["after"]["employer_contribution"] == 1950.0
+
+
+def test_the_platforms_employer_contribution_includes_the_esi_employer_share():
+    """Found on the live India tenant: on ESI-covered lines employer_contribution is the EPF part plus the
+    ESI employer share (for example 1707 = 1080 + about 627)."""
+    esi_line = line(earnings=[{"component_name": "Basic", "amount": 10000.0}, {"component_name": "HRA", "amount": 5000.0},
+                              {"component_name": "Special Allowance", "amount": 5000.0}],
+                    gross_pay=20000.0, net_pay=18450.0, basic_pay=10000.0, tds=0.0, epf_employee=1200.0,
+                    esi_employee=150.0, esi_employer=650.0, employer_contribution=1850.0,
+                    edli_employer=0.0, epf_admin_charges=0.0, pf_wage=0.0)
+    assert whatif.baseline_differences([esi_line], CONFIGS) == []

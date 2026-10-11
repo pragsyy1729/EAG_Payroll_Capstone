@@ -82,8 +82,15 @@ def _round(value: float) -> float:
     return round(value + 0.0, 2)
 
 
+def _charges_edli_admin(row: dict[str, Any]) -> bool:
+    """Whether the pay line shows EDLI or admin charges. On the live India tenant most lines carry none
+    (pf_wage 0, the 12% employer share alone), so the estimate follows the basis line's own convention."""
+    edli, admin = finite(row.get("edli_employer")), finite(row.get("epf_admin_charges"))
+    return not (edli == 0 and admin == 0)
+
+
 def _side(gross: float, basic: float, tds: float, carried: dict[str, float],
-          configs: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+          configs: dict[str, list[dict[str, Any]]], edli_admin: bool = True) -> dict[str, Any]:
     """One side (before or after) of the comparison. A line that cannot be computed is None."""
     side: dict[str, Any] = {"gross": _round(gross), "basic": _round(basic), "tds": _round(tds), **carried,
                             "epf_employee": None, "employer_contribution": None, "esi_employee": None,
@@ -100,8 +107,8 @@ def _side(gross: float, basic: float, tds: float, carried: dict[str, float],
         rate_e, rate_r, ceiling, edli_rate, edli_ceiling, admin_rate = epf_vals
         pf_wage = min(basic, ceiling) if epf.get("restrict_pf_to_ceiling") else basic
         side["epf_employee"] = _round(pf_wage * rate_e / 100)
-        side["employer_contribution"] = _round(pf_wage * rate_r / 100 + min(basic, edli_ceiling) * edli_rate / 100
-                                               + pf_wage * admin_rate / 100)
+        extras = min(basic, edli_ceiling) * edli_rate / 100 + pf_wage * admin_rate / 100 if edli_admin else 0.0
+        side["employer_contribution"] = _round(pf_wage * rate_r / 100 + extras)
 
     esi = _config(configs, "ESIConfig")
     esi_vals = [finite(esi.get(key)) if esi else None for key in (
@@ -138,6 +145,8 @@ def _differences(side: dict[str, Any], row: dict[str, Any]) -> list[dict[str, An
     out = []
     for field in _COMPARED:
         calculated, actual = side.get(field), finite(row.get(field))
+        if field == "employer_contribution" and calculated is not None:
+            calculated = _round(calculated + (side.get("esi_employer") or 0.0))  # the platform folds ESI in
         if calculated is not None and actual is not None and abs(calculated - actual) > MONEY_TOLERANCE:
             out.append({"field": field, "calculated": calculated, "actual": actual})
     return out
@@ -167,7 +176,7 @@ def baseline_differences(rows: list[dict[str, Any]], configs: dict[str, list[dic
             _, gross, basic, tds, carried = _inputs(row)
         except WhatIfError:
             continue
-        for item in _differences(_side(gross, basic, tds, carried, configs), row):
+        for item in _differences(_side(gross, basic, tds, carried, configs, _charges_edli_admin(row)), row):
             out.append({"employee_id": row.get("employee_id"), "employee_name": row.get("employee_name"),
                         "pay_line_id": row.get("id"), **item})
     return out
@@ -180,8 +189,9 @@ def estimate(*, row: dict[str, Any], change: dict[str, float], configs: dict[str
     else:
         gross1 = change["new_monthly_gross"]
     factor = gross1 / gross0
-    before = _side(gross0, basic0, tds0, carried, configs)
-    after = _side(gross1, basic0 * factor, tds0 * factor, carried, configs)
+    edli_admin = _charges_edli_admin(row)
+    before = _side(gross0, basic0, tds0, carried, configs, edli_admin)
+    after = _side(gross1, basic0 * factor, tds0 * factor, carried, configs, edli_admin)
     delta = {key: _round(after[key] - before[key])
              for key in ("gross", "net", "employer_cost") if after[key] is not None and before[key] is not None}
     assumptions = [
