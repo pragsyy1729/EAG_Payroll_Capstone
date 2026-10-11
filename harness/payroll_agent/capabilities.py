@@ -266,6 +266,20 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "payroll_readiness",
+            "Check what could make one PayRun's month wrong, read-only, calculated or not: attendance "
+            "coverage for the period (no rows at all, or rows that stop more than 3 days early, with the last "
+            "date that has rows), leave applications still pending or draft that overlap the period, joiners "
+            "and leavers who were or were not prorated, pay lines whose LOP days disagree with attendance, and "
+            "Basic below 50% of gross as an aggregated flag for review (not a legal conclusion). On an "
+            "uncalculated run it skips the line-based checks and says so. Report the findings and the "
+            "attendance coverage facts; do not conclude that the run is wrong. Use a `payrun_id` taken "
+            "from an earlier outcome (for example `list_payruns`).",
+            {"jurisdiction": _JURISDICTION,
+             "payrun_id": string("The PayRun to check.", maximum=200, format="id")},
+            families=("evidence",),
+        ),
+        Capability(
             "payroll_cost_report",
             "Report what one calculated PayRun cost: totals (gross pay, net pay, employer "
             "contribution, total cost = gross + employer contribution, headcount, overtime) and "

@@ -24,7 +24,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
-from . import cost_report, explain, lifecycle, offcycle, scan_checks, statutory, whatif
+from . import cost_report, explain, lifecycle, offcycle, readiness, scan_checks, statutory, whatif
 from .agentswitch import AgentSwitchClient, AgentSwitchError, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -221,6 +221,76 @@ async def run_pre_payroll_scan(ctx: RunContext, task: TaskSpec) -> dict[str, Any
         threshold_pct=task.input.get("change_threshold_pct", scan_checks.DEFAULT_CHANGE_PCT),
         prev_reason=prev_reason)
     return {"payrun_id": payrun_id, "run_status": run.get("status"), "compared_to": compared_to, **result}
+
+
+_ATTENDANCE_BATCH = 10
+
+
+async def _day_count(ctx: RunContext, day: str, jurisdiction: str) -> int | None:
+    """Attendance rows on one date, or None when the count could not be read."""
+    page = await _call_tool(ctx, "Attendance.list", {"date": day, "limit": 1}, jurisdiction)
+    total = page.get("total") if not page.get("error") else None
+    return total if isinstance(total, int) and not isinstance(total, bool) else None
+
+
+async def run_payroll_readiness(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch, then let readiness judge. Works on an uncalculated run (attendance and leave
+    need only the period); the line-based checks are then skipped with a stated reason."""
+    jurisdiction, payrun_id = task.input["jurisdiction"], task.input["payrun_id"]
+    run = await _call_tool(ctx, "PayRun.get", {"id": payrun_id}, jurisdiction)
+    if run.get("error"):
+        return {**run, "tool": "payroll_readiness"}
+    start, end = run.get("pay_period_start"), run.get("pay_period_end")
+    days = readiness.period_dates(start, end)
+    if days is None:
+        return {"error": True, "tool": "payroll_readiness", "code": "period_unusable",
+                "message": f"the run's period ({start} to {end}) is missing, invalid or longer than "
+                           f"{readiness.MAX_DAYS} days; nothing was checked"}
+    rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"payrun_id": payrun_id}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "payroll_readiness")
+    rows = [row for row in rows if row.get("payrun_id") == payrun_id]
+    employees, problem = await _fetch_all(ctx, "Employee.list", {}, jurisdiction)
+    if problem:
+        return _with_tool(problem, "payroll_readiness")
+    calculated = scan_checks.is_calculated(rows)
+    by_id = {person["id"]: person for person in employees if "id" in person}
+    in_scope = ({row.get("employee_id") for row in rows} if calculated
+                else {pid for pid, person in by_id.items() if person.get("status") not in ("left", "suspended")})
+    scoped = {pid: by_id[pid] for pid in in_scope if pid in by_id}
+    applications: list[dict[str, Any]] = []
+    for status in ("pending_approval", "draft"):
+        page, problem = await _fetch_all(ctx, "LeaveApplication.list", {"status": status}, jurisdiction)
+        if problem:
+            return _with_tool(problem, "payroll_readiness")
+        applications.extend(item for item in page if item.get("status") == status)
+    counts: dict[str, int | None] = {}
+    for index in range(0, len(days), _ATTENDANCE_BATCH):
+        batch = days[index:index + _ATTENDANCE_BATCH]
+        counted = await asyncio.gather(*(_day_count(ctx, day, jurisdiction) for day in batch))
+        counts.update(zip(batch, counted))
+    coverage, found = readiness.attendance_coverage(counts, start, end)
+    found += readiness.pending_leave(applications, scoped, start, end)
+    considered = {"attendance_coverage": len(days), "pending_leave": len(applications)}
+    skipped: list[dict[str, str]] = []
+    basic: dict[str, Any] = {}
+    if calculated:
+        found += readiness.proration(rows, scoped, start, end)
+        basic = readiness.basic_share(rows)
+        considered["proration"] = len(rows)
+        # One read of every LOP attendance row covers every line in both directions (LOP on the line that
+        # attendance does not show, and LOP attendance the line did not deduct); the list tool has no date range.
+        lop_rows, problem = await _fetch_all(ctx, "Attendance.list", {"is_lop": True}, jurisdiction)
+        if problem:
+            skipped.append({"check": "lop_mismatch", "reason": "the LOP attendance rows could not be read "
+                                                                f"completely ({problem.get('message')})"})
+        else:
+            found += readiness.lop_mismatches(rows, lop_rows, start, end)
+            considered["lop_mismatch"] = len(rows)
+    else:
+        skipped = [{"check": name, "reason": "run not calculated"} for name in ("proration", "lop_mismatch", "basic_share")]
+    return readiness.assemble(run=run, calculated=calculated, findings=found, coverage=coverage, basic=basic,
+                              skipped=skipped, considered=considered)
 
 
 def _named_for_cost_report(problem: dict[str, Any]) -> dict[str, Any]:
@@ -681,6 +751,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "get_payrun": run_get_payrun,
     "list_payrun_employees": run_list_payrun_employees,
     "pre_payroll_scan": run_pre_payroll_scan,
+    "payroll_readiness": run_payroll_readiness,
     "payroll_cost_report": run_payroll_cost_report,
     "statutory_dues": run_statutory_dues,
     "lifecycle_report": run_lifecycle_report,
