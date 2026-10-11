@@ -542,10 +542,18 @@ async def run_explain_pay_change(ctx: RunContext, task: TaskSpec) -> dict[str, A
         else:
             detail = f"only {len(lines)} calculated pay line(s) of regular runs exist for this employee, and two are needed"
         return _explain_error("explain_pay_change", "need_two_lines", detail)
+    if to_pair[1].get("payrun_id") == from_pair[1].get("payrun_id"):
+        return _explain_error("explain_pay_change", "cannot_explain",
+                              "the two runs are the same run; compare a run with itself shows nothing. Omit the "
+                              "run ids to compare the latest two calculated runs")
     try:
-        return explain.change(to_run=to_pair[0], to_row=to_pair[1], from_run=from_pair[0], from_row=from_pair[1])
+        result = explain.change(to_run=to_pair[0], to_row=to_pair[1], from_run=from_pair[0], from_row=from_pair[1])
     except explain.ExplainError as problem:
         return _explain_error("explain_pay_change", "cannot_explain", str(problem))
+    if str(from_pair[0].get("pay_period_start") or "") > str(to_pair[0].get("pay_period_start") or ""):
+        result["warning"] = ("from_payrun_id is the later run, so the change reads backwards: a rise here means pay "
+                             "was higher in the earlier run")
+    return result
 
 
 async def run_salary_structure_view(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
@@ -556,6 +564,8 @@ async def run_salary_structure_view(ctx: RunContext, task: TaskSpec) -> dict[str
     structure = None
     if employee.get("salary_structure_id"):
         found = await _call_tool(ctx, "SalaryStructure.get", {"id": employee["salary_structure_id"]}, jurisdiction)
+        if found.get("error") and "not found" not in str(found.get("message", "")).lower():
+            return {**found, "tool": "salary_structure_view"}      # a failed read is not "no structure on file"
         structure = None if found.get("error") else found
     rows, problem = await _fetch_all(ctx, "PayRunEmployee.list", {"employee_id": employee_id}, jurisdiction)
     if problem:

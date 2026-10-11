@@ -32,7 +32,7 @@ class FakeAgentSwitch:
             for row in rows:
                 if row.get("id") == arguments["id"]:
                     return dict(row)
-            raise AgentSwitchToolError(name, -32000, "not found")
+            raise AgentSwitchToolError(name, -32602, f"{entity} not found.")
         keys = [k for k in arguments if k not in ("limit", "offset")]
         rows = [r for r in rows if all(r.get(k) == arguments[k] for k in keys)]
         offset, limit = arguments.get("offset", 0), min(arguments.get("limit", 10), 100)
@@ -157,3 +157,31 @@ async def test_a_named_run_without_a_calculated_line_is_named_and_the_error_sugg
     assert "RA" not in result["message"].split("omit")[0]            # only the run that lacks a line is blamed
     short = await call(workers.run_explain_pay_change, FakeAgentSwitch(tables(PayRunEmployee=[LINE_A])), employee_id="E1")
     assert "only 1" in short["message"]
+
+
+async def test_a_failed_structure_read_is_the_tools_error_not_a_finding_that_no_structure_exists():
+    """Review finding: any SalaryStructure.get error became 'no structure on file', marked complete."""
+    result = await call(workers.run_salary_structure_view, FakeAgentSwitch(tables(), denied=("SalaryStructure.get",)),
+                        employee_id="E1")
+    assert result["error"] is True and result["code"] == -32001 and result["tool"] == "salary_structure_view"
+    gone = await call(workers.run_salary_structure_view,
+                      FakeAgentSwitch(tables(Employee=[{**EMPLOYEE, "salary_structure_id": "S-GONE"}])), employee_id="E1")
+    assert gone["ownership"] == "missing"                          # a genuine "SalaryStructure not found." stays a finding
+
+
+async def test_comparing_a_run_with_itself_is_an_error_and_a_reversed_order_is_flagged():
+    """Review finding: from == to said 'nothing changed'; from later than to silently flipped the signs."""
+    fake = FakeAgentSwitch(tables())
+    same = await call(workers.run_explain_pay_change, fake, employee_id="E1", from_payrun_id="RA", to_payrun_id="RA")
+    assert same["error"] is True and same["code"] == "cannot_explain" and "itself" in same["message"]
+    reversed_order = await call(workers.run_explain_pay_change, fake, employee_id="E1",
+                                from_payrun_id="RB", to_payrun_id="RA")
+    assert reversed_order["net_change"] == 2976.92 and "later" in reversed_order["warning"]
+    forward = await call(workers.run_explain_pay_change, fake, employee_id="E1")
+    assert "warning" not in forward
+
+
+def test_the_review_prompt_does_not_treat_an_error_result_as_a_finding():
+    from payroll_agent.planner import PayrollPlanner
+    prompt = PayrollPlanner._review_system()
+    assert "error result" in prompt and "not a finding" in prompt

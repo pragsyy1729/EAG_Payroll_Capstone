@@ -233,3 +233,34 @@ def test_the_structure_view_says_it_is_complete_so_a_missing_pay_line_is_not_rea
     """Found live: the planner read 'no pay lines' as missing evidence, tried to fetch pay lines and stalled."""
     for result in (view(), view(structure=None), view({**TEMPLATE, "employee_id": "E9"})):
         assert "complete" in result["note"] and "not missing evidence" in result["note"]
+
+
+def test_components_whose_names_reduce_to_nothing_stay_separate():
+    """Review finding: '---' and '***' (or two non-Latin names) shared the empty key and were summed into one."""
+    before = {**LINE_A, "deductions": [comp("---", 5.0), comp("***", 7.0)], "total_deductions": 12.0, "net_pay": 39988.0}
+    after = {**LINE_A, "id": "LY", "payrun_id": "RB", "deductions": [comp("---", 6.0), comp("***", 7.0)],
+             "total_deductions": 13.0, "net_pay": 39987.0}
+    result = explain.change(to_run=RUN_B, to_row=after, from_run=RUN_A, from_row=before)
+    assert [(d["component"], d["before"], d["after"]) for d in result["deductions"]] == [("---", 5.0, 6.0)]
+    devanagari = explain.change(to_run=RUN_B, to_row={**after, "deductions": [comp("भत्ता", 9.0), comp("कर", 4.0)],
+                                                       "total_deductions": 13.0},
+                                from_run=RUN_A, from_row={**before, "deductions": [comp("भत्ता", 8.0), comp("कर", 4.0)],
+                                                          "total_deductions": 12.0})
+    assert [d["component"] for d in devanagari["deductions"]] == ["भत्ता"] and devanagari["deductions"][0]["change"] == 1.0
+
+
+def test_another_employees_structure_leaks_neither_its_name_nor_any_figure():
+    """Review finding: structure_name (for example 'CTC 24L - M. Rao') reached the model for someone else's structure."""
+    result = view({**TEMPLATE, "employee_id": "E9", "name": "Secret 9999 - M. Rao"})
+    assert "structure_name" not in result and "Secret" not in json.dumps(result, default=str)
+    assert result["owner_employee_id"] == "E9"                 # an id lets the team find the bad link; it carries no figures
+
+
+def test_a_reimbursement_value_that_is_present_but_unreadable_is_a_problem_not_zero():
+    """Review finding: reimbursements 'x' or nan became 0.0 and the slip looked consistent."""
+    for bad in ("x", float("nan"), True):
+        result = explain.breakdown({**LINE_A, "reimbursements": bad})
+        assert result["consistent"] is False and any("reimbursements" in p for p in result["problems"]), bad
+    for ok in (None, 0, 0.0):
+        assert explain.breakdown({**LINE_A, "reimbursements": ok})["consistent"] is True, ok
+    assert explain.breakdown({k: v for k, v in LINE_A.items() if k != "reimbursements"})["consistent"] is True
