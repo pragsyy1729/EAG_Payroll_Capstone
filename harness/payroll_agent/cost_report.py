@@ -6,6 +6,7 @@ fetching; this module only computes. Every figure comes from the rows passed in.
 """
 from __future__ import annotations
 
+import json
 import math
 from collections import defaultdict
 from typing import Any
@@ -15,6 +16,7 @@ from .scan_checks import is_calculated
 
 MAX_GROUPS = 30
 MAX_PEOPLE = 25
+MAX_REGISTER = 200
 MONEY_TOLERANCE = 1.0
 UNKNOWN_GROUP = "(unknown)"
 _GROUP_FIELD = {"department": "_department_id_display", "location": "_work_location_id_display"}
@@ -163,10 +165,93 @@ def compare(rows: list[dict[str, Any]], prev_rows: list[dict[str, Any]], employe
             "previous_unusable_amounts": was_unusable}
 
 
+def _parse_components(raw: Any) -> list[tuple[str, float]] | None:
+    """[(name, amount)] from a JSON string or a list; None when anything is unreadable."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for item in raw:
+        amount = _finite(item.get("amount")) if isinstance(item, dict) else None
+        name = item.get("component_name") if isinstance(item, dict) else None
+        if amount is None or not isinstance(name, str) or not name.strip():
+            return None
+        out.append((name.strip(), amount))
+    return out
+
+
+def component_totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Totals by earnings and by deduction component name. A row with unreadable components is counted
+    in ``rows_unreadable`` and left out of both lists, never summed as zero."""
+    earnings: dict[str, dict[str, float]] = {}
+    deductions: dict[str, dict[str, float]] = {}
+    unreadable = 0
+    for row in rows:
+        earned, deducted = _parse_components(row.get("earnings")), _parse_components(row.get("deductions"))
+        if earned is None or deducted is None:
+            unreadable += 1
+            continue
+        for target, items in ((earnings, earned), (deductions, deducted)):
+            for name, amount in items:
+                bucket = target.setdefault(name, {"total": 0.0, "people": 0})
+                bucket["total"] += amount
+                bucket["people"] += 1
+    gross = sum(bucket["total"] for bucket in earnings.values())
+
+    def listing(source: dict[str, dict[str, float]], share: bool) -> list[dict[str, Any]]:
+        items = []
+        for name, bucket in sorted(source.items(), key=lambda pair: (-pair[1]["total"], pair[0]))[:MAX_GROUPS]:
+            item = {"component": name, "total": round(bucket["total"], 2), "people": int(bucket["people"])}
+            if share:
+                item["share_of_gross_percent"] = round(bucket["total"] / gross * 100, 2) if gross else None
+            items.append(item)
+        return items
+
+    return {"earnings": listing(earnings, True), "deductions": listing(deductions, False),
+            "earnings_total": round(gross, 2), "rows_unreadable": unreadable}
+
+
+def build_register(*, run: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """One line per employee for a calculated run, with totals and the header check."""
+    head = {"payrun_id": run.get("id"), "run_status": run.get("status"),
+            "period": {"start": run.get("pay_period_start"), "end": run.get("pay_period_end")}}
+    if not is_calculated(rows):
+        return {**head, "calculated": False, "skipped": [{"what": "register", "reason": "run not calculated"}]}
+    totals = _finish(_aggregate(rows, [], "none")[0])
+    lines = [{"employee_id": row.get("employee_id"), "employee_name": row.get("employee_name"),
+              "days_payable": _finite(row.get("days_payable")), "working_days": _finite(row.get("working_days")),
+              "lop_days": _finite(row.get("lop_days")), "gross": _finite(row.get("gross_pay")),
+              "total_deductions": _finite(row.get("total_deductions")),
+              "reimbursements": _finite(row.get("reimbursements")), "net": _finite(row.get("net_pay"))}
+             for row in sorted(rows, key=lambda r: (str(r.get("employee_name") or ""), str(r.get("employee_id"))))]
+    return {**head, "calculated": True, "totals": totals, "consistency": check_header(run, totals),
+            "lines": lines[:MAX_REGISTER], "lines_total": len(lines), "truncated": len(lines) > MAX_REGISTER}
+
+
+def same_month_last_year(run: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The regular, non-cancelled run for the same calendar month one year earlier, or None."""
+    start = str(run.get("pay_period_start") or "")[:7]
+    try:
+        year, month = int(start[:4]), int(start[5:7])
+    except ValueError:
+        return None
+    wanted = f"{year - 1:04d}-{month:02d}"
+    for candidate in runs:
+        if (str(candidate.get("pay_period_start") or "")[:7] == wanted and candidate.get("id") != run.get("id")
+                and candidate.get("run_type") in (None, "regular") and candidate.get("status") != "cancelled"):
+            return candidate
+    return None
+
+
 def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: list[dict[str, Any]],
                  group_by: str, prev_rows: list[dict[str, Any]] | None = None, compared_to: str | None = None,
                  variance_wanted: bool = False,
-                 variance_reason: str = "no earlier calculated regular run") -> dict[str, Any]:
+                 variance_reason: str = "no earlier calculated regular run",
+                 with_components: bool = False) -> dict[str, Any]:
     head = {"payrun_id": run.get("id"), "run_status": run.get("status"),
             "period": {"start": run.get("pay_period_start"), "end": run.get("pay_period_end")},
             "group_by": group_by}
@@ -186,6 +271,9 @@ def build_report(*, run: dict[str, Any], rows: list[dict[str, Any]], employees: 
             if variance["previous_unusable_amounts"]:
                 skipped.append({"what": "variance amounts", "reason": (
                     f"{variance['previous_unusable_amounts']} unusable amount(s) in the comparison run counted as 0")})
-    return {**head, "calculated": True, "totals": summary["totals"], "groups": summary["groups"],
-            "groups_truncated": summary["groups_truncated"], "consistency": check_header(run, summary["totals"]),
-            "variance": variance, "skipped": skipped}
+    result = {**head, "calculated": True, "totals": summary["totals"], "groups": summary["groups"],
+              "groups_truncated": summary["groups_truncated"], "consistency": check_header(run, summary["totals"]),
+              "variance": variance, "skipped": skipped}
+    if with_components:
+        result["components"] = component_totals(rows)
+    return result
