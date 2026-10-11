@@ -14,15 +14,16 @@ LOAN = {"id": "L1", "number": "LOAN-1", "status": "draft", "loan_amount": 1000.0
         "tenure_months": 12.0, "_transitions": [SUBMIT]}
 
 
-def test_the_table_has_the_eleven_actions_with_consistent_fields():
+def test_the_table_has_the_twelve_actions_with_consistent_fields():
     assert set(g.ACTIONS) == {
-        "calculate_payrun", "generate_payslips", "send_payslips", "cancel_draft_payrun", "submit_loan",
+        "calculate_payrun", "generate_payslips", "send_payslips", "cancel_draft_payrun", "recalculate_payrun", "submit_loan",
         "cancel_draft_loan", "submit_salary_revision", "apply_salary_revision", "calculate_settlement",
         "submit_final_settlement", "submit_investment_declaration"}
     for name, action in g.ACTIONS.items():
         assert action.name == name and action.from_statuses and action.tool.startswith(action.entity + ".")
         assert action.example and "NOT performed" in action.capability_description()
-    assert {n for n, a in g.ACTIONS.items() if a.to_status is None} == {"generate_payslips", "send_payslips"}
+    assert {n for n, a in g.ACTIONS.items() if a.to_status is None} == {"generate_payslips", "send_payslips",
+                                                                         "recalculate_payrun"}
     assert g.ACTIONS["calculate_settlement"].from_statuses == ("draft",)
 
 
