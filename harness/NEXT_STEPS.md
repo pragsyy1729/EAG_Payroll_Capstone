@@ -346,6 +346,9 @@ new work is read wrappers plus Python computation.
 - [x] What-if salary estimator (`salary_whatif`, India, read-only): checked against 492
       live full-month pay lines with 0 differences. Not done: US, TDS beyond a
       proportional estimate, CTC input, multi-employee scenarios.
+- [x] Guarded `recalculate_payrun`, the `run_payroll` attendance-evidence check, and decline guidance for "pay extra,
+      skipping approval" and "bank file / disburse"; the three stale section F workflow rows removed. Deferred: merge the
+      duplicate attendance helpers (`workers._attendance_counts` here, `_day_count` in `payroll_readiness`) if both land.
 - [ ] Revisit `GAP_REPORT.md` question 2: gaps 3, 5, 6 look
       orchestration-buildable.
 - [ ] `payroll_agent/main.py` FastAPI service, after both flows pass.

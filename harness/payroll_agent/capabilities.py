@@ -399,7 +399,12 @@ def default_registry() -> CapabilityRegistry:
             "provides, for example approving, rejecting, deleting or disbursing a payroll "
             "record, or reading data that belongs to another app. Pick the reason code that "
             "fits. Do NOT use it when a capability exists for the request, even if it may be "
-            "refused at runtime (the runtime reports those). No lookups are needed first.",
+            "refused at runtime (the runtime reports those). No lookups are needed first. Examples: paying "
+            "an employee an extra amount, bonus or advance outside a pay run, or skipping an approval step, "
+            "needs reason code needs_human_approval (segregation of duties: this seat cannot approve or "
+            "bypass approval); generating a bank file or transfer file, or disbursing or paying out money, "
+            "needs reason code no_such_capability (this seat has no disbursement tool). Name what was asked "
+            "and say what can be done instead (for example creating a draft run for a human to approve).",
             {"reason_code": string("Why it cannot be done.",
                                    choices=("no_such_capability", "needs_human_approval",
                                             "outside_payroll_scope", "not_permitted")),
