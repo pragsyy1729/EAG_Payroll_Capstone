@@ -1,14 +1,15 @@
 # Payroll Agent: Workflows and Queries
 
-Date: 2026-09-30. The concrete questions the agent must answer, grouped by
+Date: 2026-09-30; updated 2026-10-11. The concrete questions the agent must answer, grouped by
 family, each matched to the AgentSwitch tools our seat (`team12`, India
 tenant) can reach. `REQUIREMENTS.md` is the topic-by-topic catalogue of
 payroll scenarios; this file is the question-by-question view used to decide
 what to build and what to evaluate.
 
 Tool availability comes from the 2026-09-29 `tools/list` snapshot (345
-tools, byte-identical on the US tenant). It goes stale: re-fetch before
-relying on it. Status: **built** (live-verified), **partial**, **todo**.
+tools, byte-identical on the US tenant). It goes stale: on 2026-10-11 the
+India seat listed 362 tools (the US tenant was not re-checked). Re-fetch
+before relying on it. Status: **built** (live-verified), **partial**, **todo**.
 
 ## A. Employee "why" questions (read-only, explain)
 
@@ -47,10 +48,10 @@ The correct answer is that she has no usable structure, not a component breakdow
 |---|---|---|
 | Run August payroll | `PayRun.run_payroll` | built: refuses when the month's run is not draft/review |
 | Calculate a draft run (draft to review) | `PayRun.calculate_payroll` | built (`calculate_payrun`); refusal verified live, execution only with a fake client |
-| Recalculate after an attendance fix | `PayRun.recalculate_lines` | todo |
+| Recalculate after an attendance fix | `PayRun.recalculate_lines` | todo (rewrites every line of a run; not built) |
 | Generate payslips; get the distribution list | `PayRun.generate_payslips`, `send_payslips` | built (`generate_payslips`, `send_payslips`; send only reports a list, it emails nobody); fake client only |
 | Submit this run for approval | `PayRun.submit_for_approval` | built |
-| Run an off-cycle or bonus payroll | `PayRun.create` (`run_type=off_cycle`) | todo, unverified |
+| Create an off-cycle or bonus pay run | `PayRun.create` (`run_type=off_cycle`, `bonus`, `correction`) | partial: `create_off_cycle_run` makes one empty draft run (refusals verified live, no run ever created, allowed path with a fake client only); adding employees is todo, see section I |
 | Cancel a draft run | `PayRun.cancel.draft.cancelled` | built (`cancel_draft_payrun`); refusal verified live |
 
 Every guarded action (sections B and F) changes shared data that this seat cannot undo, so each runs only with its
