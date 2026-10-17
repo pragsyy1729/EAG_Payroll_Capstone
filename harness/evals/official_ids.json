@@ -1,0 +1,43 @@
+{
+  "ids": {
+    "282a2b1a-f4df-48f4-bf84-2eab3f65aea0": {
+      "entity": "EmployeeLoan",
+      "number": "LOAN-2026-00081"
+    },
+    "39b67f17-c8f9-439e-a908-0953a8d35d5b": {
+      "entity": "PayRun",
+      "number": "PRUN-2026-00012"
+    },
+    "441e6779-ef91-44d0-ba9d-4ffba7b38622": {
+      "entity": "Employee",
+      "number": "EMP-2026-00100"
+    },
+    "7927e07b-42c5-4bc3-b2fc-e131ea78416a": {
+      "entity": "FinalSettlement",
+      "number": "FFS-2026-00001"
+    },
+    "b5b0cc7d-7aef-4738-a6e0-bfaa01c94aaa": {
+      "entity": "PayRun",
+      "number": "PRUN-2026-00013"
+    },
+    "dd9bf1ea-eab9-4f93-b91f-7b6721ce4d0b": {
+      "entity": "PayRun",
+      "number": "PRUN-2026-00011"
+    },
+    "eacca415-6eec-4ed1-bdb2-924da3587618": {
+      "entity": "SalaryRevision",
+      "number": "REV-2026-00101"
+    },
+    "f77b46e3-4276-4f36-b2d3-d618fa068514": {
+      "entity": "PayRun",
+      "number": "PRUN-2026-00010"
+    },
+    "f8e8a973-1c34-4025-ae55-fbe728ba7b35": {
+      "entity": "Employee",
+      "number": "EMP-2026-00029"
+    }
+  },
+  "unresolved": [
+    "d0477238-3c08-4d87-a378-fca1a4b0dfe8"
+  ]
+}

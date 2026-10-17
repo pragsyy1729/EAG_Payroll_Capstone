@@ -170,7 +170,8 @@ def _prepare(task: dict[str, Any], mapping: dict[str, str], missing: dict[str, s
 async def run_official(*, instance: str, tasks: list[dict[str, Any]], args: argparse.Namespace, results_path: Path,
                        run_dir: Path, make_client: Callable[[], Any], make_live_llm: Callable[[dict, Any], Any],
                        table: dict[str, dict[str, str]], task_runner: Callable[..., Any] = run_task,
-                       clock: Callable[[], float] = time.monotonic, deadline: float = float("inf")) -> dict[str, Any]:
+                       clock: Callable[[], float] = time.monotonic, deadline: float = float("inf"),
+                       task_timeout: float = float("inf")) -> dict[str, Any]:
     jurisdiction = INSTANCES[instance]
     entries: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
@@ -193,7 +194,9 @@ async def run_official(*, instance: str, tasks: list[dict[str, Any]], args: argp
                 return ScriptedLLM(json.loads(scripts[task["id"]])["steps"], name=task["id"])
             return make_live_llm(task, a)
 
-        for task in tasks:
+        # Scripted tasks need no model and finish fast; run them first so a slow platform model can only cost
+        # the model-driven tasks (found in the local dry run: one slow task used the whole budget).
+        for task in sorted(tasks, key=lambda t: t["transport"] != "scripted"):
             if task["jurisdiction"] != jurisdiction:
                 continue
             if task.get("mode") == "live" and task.get("allow") and not args.live:
@@ -213,9 +216,12 @@ async def run_official(*, instance: str, tasks: list[dict[str, Any]], args: argp
                     try:
                         row = await asyncio.wait_for(
                             task_runner(prepared, args, run_dir, make_client=make_client, make_llm=make_llm),
-                            timeout=remaining)
+                            timeout=min(remaining, task_timeout))
                     except asyncio.TimeoutError:
-                        row = {"state": OUT_OF_TIME, "verifier_results": []}
+                        if task_timeout < remaining:      # this task was too slow; the run itself still has time
+                            row = {"state": INFRA, "reason": f"task exceeded {task_timeout:g}s", "verifier_results": []}
+                        else:
+                            row = {"state": OUT_OF_TIME, "verifier_results": []}
                     except Exception as problem:     # one task must never stop the file being written
                         row = {"state": INFRA, "reason": f"{type(problem).__name__}: {problem}", "verifier_results": []}
             entries.append(entry_for(instance, task, row))
@@ -242,6 +248,8 @@ def _parser() -> argparse.ArgumentParser:
                         help="arm the write-capable (refusal) tasks; use only where writes are thrown away")
     parser.add_argument("--timeout-minutes", type=float, default=20,
                         help="the platform's limit; stops starting tasks 2 minutes before it")
+    parser.add_argument("--task-timeout-seconds", type=float, default=240,
+                        help="longest one task may run; a slower task is an infra error and the run goes on")
     parser.add_argument("--results", default="results.json", help="where to write results.json")
     parser.add_argument("--tasks", default=str(EVALS / "tasks" / "*.jsonl"), help="glob of task files")
     parser.add_argument("--only", action="append", default=[], help="run only this task id (repeatable)")
@@ -282,7 +290,7 @@ def main(argv: list[str] | None = None) -> None:
         instance=instance, tasks=tasks, args=args, results_path=results_path, run_dir=run_dir,
         make_client=AgentSwitchClient,
         make_live_llm=lambda task, a: PacedLLM(OpenAICompatLLM(), min_interval=a.min_interval),
-        table=table, deadline=deadline))
+        table=table, deadline=deadline, task_timeout=args.task_timeout_seconds))
     print(result["summary"], flush=True)
 
 

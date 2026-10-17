@@ -280,3 +280,34 @@ def test_the_config_file_matches_the_launcher_and_the_documented_keys():
 def test_the_launcher_runs_from_the_repo_root_and_shows_the_flags():
     done = subprocess.run([sys.executable, "official_run.py", "--help"], cwd=ROOT, capture_output=True, text=True, timeout=60)
     assert done.returncode == 0 and "--allow-writes" in done.stdout and "--timeout-minutes" in done.stdout
+
+
+# --- found in the local dry run: one slow model-driven task used the whole budget -------------------------------------
+
+async def test_scripted_tasks_run_before_model_driven_ones(tmp_path):
+    ran = []
+
+    async def runner(t, a, d, **kw):
+        ran.append(t["id"])
+        return row_for(PASS, claims=["c"])
+
+    scripted = {**task("fast"), "transport": "scripted", "script": "scripts/scaffold_august_lookup.json"}
+    # "slow" is listed first but needs the model; "fast" is scripted and must go first (a stable order otherwise)
+    await run([task("slow"), scripted, task("slow2")], runner, tmp_path)
+    assert ran == ["fast", "slow", "slow2"]
+
+
+async def test_one_task_that_exceeds_its_own_cap_is_an_infra_entry_and_the_rest_still_run(tmp_path):
+    async def runner(t, a, d, **kw):
+        if t["id"] == "hang":
+            await asyncio.sleep(3600)
+        return row_for(PASS, claims=["c"])
+
+    a = args()
+    await official.run_official(
+        instance="suryodaya", tasks=[task("hang"), task("after")], args=a, results_path=tmp_path / "results.json",
+        run_dir=tmp_path, make_client=lambda: FakeClient(), make_live_llm=lambda t, a: None, table={},
+        task_runner=runner, clock=lambda: 0.0, deadline=1e9, task_timeout=0.05)
+    by_id = {t["id"]: t for t in read(tmp_path)["tasks"]}
+    assert by_id["suryodaya:hang"]["passed"] is False and by_id["suryodaya:hang"]["evidence"].startswith("infra: task exceeded")
+    assert by_id["suryodaya:after"]["passed"] is True
