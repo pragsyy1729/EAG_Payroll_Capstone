@@ -49,6 +49,8 @@ import httpx
 
 Jurisdiction = Literal["IN", "US"]
 JURISDICTIONS: tuple[Jurisdiction, ...] = ("IN", "US")
+# The official harness run names the tenant by instance, not by jurisdiction.
+INSTANCE_JURISDICTION: dict[str, Jurisdiction] = {"suryodaya": "IN", "keystone": "US"}
 
 # Same markers .env.example ships as placeholders, so "configured" means the
 # same thing here as it does when a human reads the file.
@@ -82,6 +84,7 @@ class _Tenant:
     token: str | None = None
     tools: list[dict[str, Any]] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    token_only: bool = False      # a seat token handed in by the platform: there is nothing to log in with
 
 
 class AgentSwitchClient:
@@ -98,6 +101,15 @@ class AgentSwitchClient:
         self._owns_client = client is None
         self._ids = itertools.count(1)
         self._tenants: dict[Jurisdiction, _Tenant] = {}
+        token = os.getenv("AGENTSWITCH_TOKEN", "").strip()
+        base = os.getenv("AGENTSWITCH_BASE_URL", "").strip().rstrip("/")
+        if token and base:
+            instance = os.getenv("AGENTSWITCH_INSTANCE", "").strip().lower()
+            if instance not in INSTANCE_JURISDICTION:
+                raise AgentSwitchError("AGENTSWITCH_INSTANCE must be 'suryodaya' or 'keystone' when "
+                                       "AGENTSWITCH_TOKEN is set")
+            self._tenants[INSTANCE_JURISDICTION[instance]] = _Tenant(base, "", "", token=token, token_only=True)
+            return
         for jurisdiction in JURISDICTIONS:
             base_url = os.getenv(f"AGENTSWITCH_{jurisdiction}_BASE_URL", "").rstrip("/")
             email = os.getenv(f"AGENTSWITCH_{jurisdiction}_EMAIL", "")
@@ -159,6 +171,9 @@ class AgentSwitchClient:
                 json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
                 headers={"Authorization": f"Bearer {token}"},
             )
+            if response.status_code == 401 and tenant.token_only:
+                raise AgentSwitchError("AgentSwitch rejected the seat token (401); a platform token cannot be "
+                                       "refreshed here")
             if response.status_code == 401 and not retried:
                 # A session token can expire mid-run. Retried exactly once:
                 # an actually-wrong credential must fail loudly, not loop.

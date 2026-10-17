@@ -15,7 +15,7 @@ PASS, FAIL, INFRA = "pass", "fail", "infra_error"
 # Gateway/transport trouble, as it appears in a planner "failed visibly" reason
 # or an exception message.
 _INFRA = re.compile(r"returned (?:429|502|503)\b|TimeoutError|ReadTimeout|ConnectError|ConnectTimeout|"
-                    r"ScriptExhausted|quota|login failed", re.I)
+                    r"ScriptExhausted|quota|login failed|model endpoint", re.I)
 
 
 def infra_reason(record: dict[str, Any]) -> str | None:
