@@ -391,3 +391,11 @@ new work is read wrappers plus Python computation.
 - [x] Study a reference payroll product (integration guide Step 2). Done:
       `GAP_REPORT.md` is the result (six gaps vs. Rippling/Gusto/Keka/
       greytHR/Deel/Dayforce). Only its question-2 revision is still open.
+
+## Official harness run (added 2026-10-11)
+
+- [x] Root `agentswitch-harness.toml`, `official_run.py`, `requirements.txt`; token mode in `AgentSwitchClient`;
+  `OpenAICompatLLM`; record-id remap; eight end-to-end scaffold tasks. See `OFFICIAL_RUN.md`.
+- [ ] Save the branch in AgentSwitch "Our harness" and press Submit (one run per 3 days; a manual step).
+- [ ] After the first real run, read the results and adjust: working directory, id stability, model speed.
+- [ ] Add team-authored tasks (`authored_by: "team"`) so they join the same `results.json`.
