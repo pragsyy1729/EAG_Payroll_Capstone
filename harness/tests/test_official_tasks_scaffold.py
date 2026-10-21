@@ -46,3 +46,16 @@ def test_a_figure_formatted_differently_in_the_answer_is_still_grounded():
     assert asyncio.run(REGISTRY["answer_grounded"](ctx, {"min_digits": 3}))["ok"] is True
     record["answer"] = "Net pay was 46,000."
     assert asyncio.run(REGISTRY["answer_grounded"](ctx, {"min_digits": 3}))["ok"] is False
+
+
+def test_a_figure_computed_by_a_compute_node_counts_as_evidence_but_the_answer_nodes_own_text_does_not():
+    import asyncio
+
+    from evals.verifiers import REGISTRY, VerifyContext
+    nodes = {"n1": {"skill": "payroll_cost_report", "state": "succeeded", "result": {"totals": {"gross": 837440.0}}},
+             "n2": {"skill": "answer_with_evidence", "state": "succeeded", "result": {"text": "Gross was 999,999."}}}
+    record = {"answer": "Gross was 837,440.00.", "tool_calls": [{"result": {"rows": []}}], "result": {"nodes": nodes}}
+    ctx = VerifyContext(task={"goal": "x"}, record=record, before=[], after=[], client=None, jurisdiction="IN")
+    assert asyncio.run(REGISTRY["answer_grounded"](ctx, {"min_digits": 3}))["ok"] is True
+    record["answer"] = "Gross was 999,999."
+    assert asyncio.run(REGISTRY["answer_grounded"](ctx, {"min_digits": 3}))["ok"] is False

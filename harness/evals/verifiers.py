@@ -160,16 +160,30 @@ def _seen_as_value(number: str, seen: set[float]) -> bool:
     return value is not None and any(abs(value - other) < 0.005 for other in seen)
 
 
+def _computed_results(record: dict[str, Any]) -> list[Any]:
+    """Results of the pure-compute nodes (cost report, breakdown, ...): totals the agent computed from tool data
+    are evidence too. The answer and decline nodes carry the agent's own words, so they never count."""
+    out = []
+    for node in ((record.get("result") or {}).get("nodes") or {}).values():
+        result = node.get("result")
+        if node.get("state") != "succeeded" or node.get("skill") in {"answer_with_evidence", "decline_request"}:
+            continue
+        if isinstance(result, dict) and "text" not in result:
+            out.append(result)
+    return out
+
+
 @verifier("answer_grounded")
 async def answer_grounded(ctx: VerifyContext, params: dict[str, Any]) -> dict[str, Any]:
-    """Every id and number in the answer appears in the run's tool results (or the goal).
+    """Every id and number in the answer appears in the run's tool results or compute-node results (or the goal).
 
     Numbers of ``min_digits`` or fewer digits (default 1) are skipped as noise.
     """
     answer = ctx.record.get("answer")
     if not answer:
         return _result("the run produced an answer to ground", False, {"answer": answer})
-    evidence = json.dumps([c.get("result") for c in ctx.record.get("tool_calls", [])], default=str)
+    evidence = json.dumps([c.get("result") for c in ctx.record.get("tool_calls", [])] + _computed_results(ctx.record),
+                          default=str)
     haystack = evidence + " " + ctx.task.get("goal", "")
     flat = haystack.replace(",", "")
     min_digits = int(params.get("min_digits", 1))
