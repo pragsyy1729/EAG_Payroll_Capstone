@@ -41,7 +41,7 @@ async def test_a_reply_becomes_text_with_the_provider_and_model():
     seen: list = []
     llm = llm_with([(200, completion("the answer"))], seen)
     result = await llm.complete("the prompt", "the system")
-    assert result == {"text": "the answer", "provider": "platform", "model": "platform-model"}
+    assert result == {"text": "the answer", "provider": "platform", "model": "platform-model", "finish_reason": "stop"}
     body = seen[0]
     assert body["messages"] == [{"role": "system", "content": "the system"}, {"role": "user", "content": "the prompt"}]
     assert body["temperature"] == 0 and body["model"] == "platform-model"

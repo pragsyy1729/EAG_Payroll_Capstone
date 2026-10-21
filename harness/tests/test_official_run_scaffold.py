@@ -311,3 +311,18 @@ async def test_one_task_that_exceeds_its_own_cap_is_an_infra_entry_and_the_rest_
     by_id = {t["id"]: t for t in read(tmp_path)["tasks"]}
     assert by_id["suryodaya:hang"]["passed"] is False and by_id["suryodaya:hang"]["evidence"].startswith("infra: task exceeded")
     assert by_id["suryodaya:after"]["passed"] is True
+
+
+# --- from the reviewer's round-3 feedback -----------------------------------------------------------------------------
+
+def test_a_grounding_failure_names_the_numbers_that_were_not_in_the_tool_results():
+    row = {"state": FAIL, "failed_claims": ["every id and number in the answer appears in tool results"],
+           "verifier_results": [{"claim": "every id and number in the answer appears in tool results", "ok": False,
+                                 "observed": {"ungrounded_numbers": ["52000"], "ungrounded_ids": []}}]}
+    assert "ungrounded numbers: ['52000']" in official.entry_for("suryodaya", task("a"), row)["evidence"]
+
+
+def test_a_missing_answer_is_named_in_the_evidence():
+    row = {"state": FAIL, "failed_claims": ["the run produced an answer to ground"],
+           "verifier_results": [{"claim": "the run produced an answer to ground", "ok": False, "observed": {"answer": None}}]}
+    assert "ended without a final answer" in official.entry_for("suryodaya", task("a"), row)["evidence"]

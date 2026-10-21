@@ -35,3 +35,14 @@ def test_every_id_the_tasks_and_scripts_mention_is_mapped_or_listed_as_unresolve
     used = set(idmap.UUID.findall(text))
     assert used <= set(table["ids"]) | set(table["unresolved"])
     assert all({"entity", "number"} <= set(v) for v in table["ids"].values())
+
+
+def test_a_figure_formatted_differently_in_the_answer_is_still_grounded():
+    import asyncio
+
+    from evals.verifiers import REGISTRY, VerifyContext
+    record = {"answer": "Net pay was 45,000.00 and gross 52,500.50.", "tool_calls": [{"result": {"net": 45000.0, "gross": 52500.5}}]}
+    ctx = VerifyContext(task={"goal": "x"}, record=record, before=[], after=[], client=None, jurisdiction="IN")
+    assert asyncio.run(REGISTRY["answer_grounded"](ctx, {"min_digits": 3}))["ok"] is True
+    record["answer"] = "Net pay was 46,000."
+    assert asyncio.run(REGISTRY["answer_grounded"](ctx, {"min_digits": 3}))["ok"] is False

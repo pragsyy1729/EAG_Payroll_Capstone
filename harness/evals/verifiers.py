@@ -147,6 +147,19 @@ def _norm(number: str) -> str:
     return number.replace(",", "").rstrip(".")
 
 
+def _value(number: str) -> float | None:
+    try:
+        return float(_norm(number))
+    except ValueError:
+        return None
+
+
+def _seen_as_value(number: str, seen: set[float]) -> bool:
+    """45,000.00 in an answer is the same figure as 45000.0 in a tool result: compare values, not text."""
+    value = _value(number)
+    return value is not None and any(abs(value - other) < 0.005 for other in seen)
+
+
 @verifier("answer_grounded")
 async def answer_grounded(ctx: VerifyContext, params: dict[str, Any]) -> dict[str, Any]:
     """Every id and number in the answer appears in the run's tool results (or the goal).
@@ -161,7 +174,9 @@ async def answer_grounded(ctx: VerifyContext, params: dict[str, Any]) -> dict[st
     flat = haystack.replace(",", "")
     min_digits = int(params.get("min_digits", 1))
     numbers = {_norm(n) for n in _NUMBER.findall(answer)}
-    ungrounded_numbers = sorted(n for n in numbers if len(n.replace(".", "")) > min_digits and n not in flat)
+    seen_values = {v for v in (_value(n) for n in _NUMBER.findall(flat)) if v is not None}
+    ungrounded_numbers = sorted(n for n in numbers if len(n.replace(".", "")) > min_digits and n not in flat
+                                and not _seen_as_value(n, seen_values))
     ungrounded_ids = sorted(i for i in set(_ID.findall(answer)) if i not in haystack)
     return _result(params.get("claim") or "every id and number in the answer appears in tool results",
                    not (ungrounded_numbers or ungrounded_ids),

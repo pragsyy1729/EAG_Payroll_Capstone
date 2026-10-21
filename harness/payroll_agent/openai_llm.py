@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from typing import Any
 
 import httpx
@@ -20,7 +21,7 @@ _RETRY_STATUS = (429, 500, 502, 503, 504)
 
 class OpenAICompatLLM:
     def __init__(self, client: AsyncOpenAI | None = None, *, model: str | None = None, attempts: int = 4,
-                 base_delay: float = 1.0, max_tokens: int = 2000) -> None:
+                 base_delay: float = 1.0, max_tokens: int = 4096) -> None:
         try:
             self._client = client or AsyncOpenAI(max_retries=0)    # reads OPENAI_BASE_URL and OPENAI_API_KEY
         except OpenAIError as problem:
@@ -36,7 +37,11 @@ class OpenAICompatLLM:
                 reply = await self._client.chat.completions.create(
                     model=self.model, messages=messages, temperature=0, max_tokens=self.max_tokens)
                 text = (reply.choices[0].message.content or "") if reply.choices else ""
-                return {"text": text, "provider": "platform", "model": reply.model or self.model}
+                finish = reply.choices[0].finish_reason if reply.choices else None
+                if not text.strip():       # a model that spends its budget on reasoning can return nothing visible
+                    print(f"model endpoint returned empty text (finish_reason={finish})", file=sys.stderr, flush=True)
+                return {"text": text, "provider": "platform", "model": reply.model or self.model,
+                        "finish_reason": finish}
             except APIStatusError as problem:
                 if problem.status_code not in _RETRY_STATUS:
                     raise RuntimeError(f"model endpoint returned {problem.status_code}: {problem.message}") from problem

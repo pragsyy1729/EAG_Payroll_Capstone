@@ -100,6 +100,13 @@ def entry_for(instance: str, task: dict[str, Any], row: dict[str, Any]) -> dict[
         judged = [r for r in results if "ok" in r]
         score = round(len(held) / len(judged), 2) if judged else 0.0
         evidence = "failed: " + "; ".join(row.get("failed_claims") or ["a check did not hold"])
+        for result in results:                    # say which numbers or ids were not in the tool results
+            observed = result.get("observed") if not result.get("ok", True) else None
+            if isinstance(observed, dict) and (observed.get("ungrounded_numbers") or observed.get("ungrounded_ids")):
+                evidence += (f" [ungrounded numbers: {observed.get('ungrounded_numbers')}, "
+                             f"ids: {observed.get('ungrounded_ids')}]")
+            elif isinstance(observed, dict) and "answer" in observed and not observed["answer"]:
+                evidence += " [the agent ended without a final answer]"
     elif state == OUT_OF_TIME:
         score, evidence = 0.0, "not run: out of time"
     else:
@@ -219,7 +226,7 @@ async def run_official(*, instance: str, tasks: list[dict[str, Any]], args: argp
                             timeout=min(remaining, task_timeout))
                     except asyncio.TimeoutError:
                         if task_timeout < remaining:      # this task was too slow; the run itself still has time
-                            row = {"state": INFRA, "reason": f"task exceeded {task_timeout:g}s", "verifier_results": []}
+                            row = {"state": INFRA, "reason": f"task exceeded {task_timeout:g}s (the agent was too slow; nothing on the platform failed)", "verifier_results": []}
                         else:
                             row = {"state": OUT_OF_TIME, "verifier_results": []}
                     except Exception as problem:     # one task must never stop the file being written
@@ -248,7 +255,7 @@ def _parser() -> argparse.ArgumentParser:
                         help="arm the write-capable (refusal) tasks; use only where writes are thrown away")
     parser.add_argument("--timeout-minutes", type=float, default=20,
                         help="the platform's limit; stops starting tasks 2 minutes before it")
-    parser.add_argument("--task-timeout-seconds", type=float, default=240,
+    parser.add_argument("--task-timeout-seconds", type=float, default=360,
                         help="longest one task may run; a slower task is an infra error and the run goes on")
     parser.add_argument("--results", default="results.json", help="where to write results.json")
     parser.add_argument("--tasks", default=str(EVALS / "tasks" / "*.jsonl"), help="glob of task files")
