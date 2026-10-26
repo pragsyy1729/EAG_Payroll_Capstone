@@ -355,11 +355,13 @@ def default_registry() -> CapabilityRegistry:
         ),
         Capability(
             "headcount_report",
-            "Count the company's employees, read-only: the total, and the count by department, by status "
-            "and by employment type, computed in code from every employee record. Use it for any question "
-            "about how many employees there are, in total or per department, or how many are active, "
-            "suspended or interns. Quote its counts; do not list individual employees and never tally "
-            "rows yourself. Use `list_employees` instead when the user wants names or one employee's record.",
+            "Count the company's employee roster, read-only: the total, and the count by department, by status "
+            "and by employment type, computed in code from every employee record. Use it for questions about "
+            "how many employees the company has, per department, or how many are active, suspended or interns. "
+            "It counts the roster, not a pay run: for how many employees were paid in a run, or what a run cost, "
+            "use `list_payrun_employees` or `payroll_cost_report` instead. Quote its counts; do not list "
+            "individual employees and never tally rows yourself. Use `list_employees` when the user wants names "
+            "or one employee's record.",
             {"jurisdiction": _JURISDICTION},
             families=("evidence",),
         ),

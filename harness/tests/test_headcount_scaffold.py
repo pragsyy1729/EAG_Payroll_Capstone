@@ -80,3 +80,13 @@ def test_the_capability_is_a_read_only_evidence_capability_the_planner_can_choos
     for phrase in ("how many employees", "department", "do not list"):
         assert phrase in capability.description.lower() or phrase in capability.description, phrase
     assert "headcount_report" in workers._WORKERS
+
+
+def test_the_description_keeps_headcount_for_the_roster_and_points_pay_run_questions_elsewhere():
+    """Review concern: 'how many employees on the July payroll' must not be answered with the company roster."""
+    registry = default_registry()
+    description = registry.get("headcount_report").description
+    assert "roster" in description and "not a pay run" in description
+    assert "any question about how many employees there are" not in description
+    for other in ("list_payrun_employees", "payroll_cost_report", "list_employees"):
+        assert other in description and other in registry.names(), other
