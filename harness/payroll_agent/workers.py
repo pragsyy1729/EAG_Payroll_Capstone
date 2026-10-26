@@ -24,7 +24,7 @@ from functools import partial
 from typing import Any, Awaitable, Callable
 
 from . import cost_report, guarded, scan_checks
-from . import cost_report, evidence, explain, lifecycle, offcycle, readiness, scan_checks, statutory, whatif
+from . import cost_report, evidence, explain, headcount, lifecycle, offcycle, readiness, scan_checks, statutory, whatif
 from .agentswitch import AgentSwitchClient, AgentSwitchError, AgentSwitchToolError
 from .core.live_graph import TaskSpec
 
@@ -464,6 +464,14 @@ async def run_statutory_dues(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     return result
 
 
+async def run_headcount_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
+    """Read-only: fetch every employee, then let headcount count them."""
+    employees, problem = await _fetch_all(ctx, "Employee.list", {}, task.input["jurisdiction"])
+    if problem:
+        return _with_tool(problem, "headcount_report")
+    return headcount.build_headcount(employees)
+
+
 async def run_lifecycle_report(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     """Read-only: fetch the topic's entities and the employee names, then let lifecycle compute."""
     jurisdiction, topic = task.input["jurisdiction"], task.input["topic"]
@@ -857,6 +865,7 @@ _WORKERS: dict[str, Callable[[RunContext, TaskSpec], Awaitable[dict[str, Any]]]]
     "payroll_register": run_payroll_register,
     "statutory_dues": run_statutory_dues,
     "lifecycle_report": run_lifecycle_report,
+    "headcount_report": run_headcount_report,
     "salary_whatif": run_salary_whatif,
     "payslip_breakdown": run_payslip_breakdown,
     "explain_pay_change": run_explain_pay_change,

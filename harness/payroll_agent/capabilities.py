@@ -354,6 +354,16 @@ def default_registry() -> CapabilityRegistry:
             families=("evidence",),
         ),
         Capability(
+            "headcount_report",
+            "Count the company's employees, read-only: the total, and the count by department, by status "
+            "and by employment type, computed in code from every employee record. Use it for any question "
+            "about how many employees there are, in total or per department, or how many are active, "
+            "suspended or interns. Quote its counts; do not list individual employees and never tally "
+            "rows yourself. Use `list_employees` instead when the user wants names or one employee's record.",
+            {"jurisdiction": _JURISDICTION},
+            families=("evidence",),
+        ),
+        Capability(
             "offcycle_report",
             "List the off-cycle, bonus and correction pay runs, read-only: reason, status, pay date, approval "
             "deadline, the platform's deadline state, employee count and the latest funding verdict. It works "
