@@ -160,6 +160,20 @@ def _seen_as_value(number: str, seen: set[float]) -> bool:
     return value is not None and any(abs(value - other) < 0.005 for other in seen)
 
 
+def _why_no_answer(record: dict[str, Any]) -> str | None:
+    """Why a run ended without a final answer: the model returned nothing, or the planner gave up."""
+    result = record.get("result") or {}
+    for node in (result.get("nodes") or {}).values():
+        outcome = node.get("result")
+        if node.get("skill") == "answer_with_evidence" and isinstance(outcome, dict) and outcome.get("empty_reply"):
+            return f"the model returned an empty reply (finish_reason={outcome.get('finish_reason')})"
+    reasons = [str(e.get("reason")) for e in result.get("patch_events") or [] if e.get("reason")]
+    if reasons:
+        return reasons[-1][:200]
+    exception = record.get("exception")
+    return str(exception.get("message"))[:200] if isinstance(exception, dict) else None
+
+
 def _computed_results(record: dict[str, Any]) -> list[Any]:
     """Results of the pure-compute nodes (cost report, breakdown, ...): totals the agent computed from tool data
     are evidence too. The answer and decline nodes carry the agent's own words, so they never count."""
@@ -181,7 +195,8 @@ async def answer_grounded(ctx: VerifyContext, params: dict[str, Any]) -> dict[st
     """
     answer = ctx.record.get("answer")
     if not answer:
-        return _result("the run produced an answer to ground", False, {"answer": answer})
+        return _result("the run produced an answer to ground", False,
+                       {"answer": answer, "why": _why_no_answer(ctx.record)})
     evidence = json.dumps([c.get("result") for c in ctx.record.get("tool_calls", [])] + _computed_results(ctx.record),
                           default=str)
     haystack = evidence + " " + ctx.task.get("goal", "")

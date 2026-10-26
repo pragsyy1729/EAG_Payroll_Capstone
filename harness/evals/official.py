@@ -106,7 +106,8 @@ def entry_for(instance: str, task: dict[str, Any], row: dict[str, Any]) -> dict[
                 evidence += (f" [ungrounded numbers: {observed.get('ungrounded_numbers')}, "
                              f"ids: {observed.get('ungrounded_ids')}]")
             elif isinstance(observed, dict) and "answer" in observed and not observed["answer"]:
-                evidence += " [the agent ended without a final answer]"
+                why = observed.get("why")
+                evidence += f" [the agent ended without a final answer{': ' + str(why) if why else ''}]"
     elif state == OUT_OF_TIME:
         score, evidence = 0.0, "not run: out of time"
     else:

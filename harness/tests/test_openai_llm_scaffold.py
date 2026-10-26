@@ -14,9 +14,9 @@ from evals.scoring import INFRA, infra_reason, score
 from payroll_agent.openai_llm import OpenAICompatLLM
 
 
-def completion(text="hello", model="platform-model"):
+def completion(text="hello", model="platform-model", finish="stop"):
     return {"id": "x", "object": "chat.completion", "created": 0, "model": model,
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}]}
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": finish}]}
 
 
 def llm_with(replies, seen=None):
@@ -104,3 +104,22 @@ async def test_health_costs_no_model_call_and_close_is_safe():
 def test_a_failed_model_call_scores_as_infra_not_fail():
     record = {"exception": {"message": "model endpoint returned 503: busy"}, "preflight_error": None, "result": None}
     assert score(record, [])["state"] == INFRA
+
+
+async def test_an_empty_reply_that_hit_the_token_limit_is_retried_with_a_larger_budget():
+    seen: list = []
+    llm = llm_with([(200, completion("", finish="length")), (200, completion("the answer"))], seen)
+    result = await llm.complete("p", "s")
+    assert result["text"] == "the answer" and [b["max_tokens"] for b in seen] == [4096, 8192]
+
+
+async def test_an_empty_reply_that_stopped_normally_is_returned_without_a_retry():
+    seen: list = []
+    result = await llm_with([(200, completion("", finish="stop"))], seen).complete("p", "s")
+    assert result["text"] == "" and len(seen) == 1
+
+
+async def test_the_larger_budget_stops_at_the_cap():
+    seen: list = []
+    result = await llm_with([(200, completion("", finish="length"))], seen).complete("p", "s")
+    assert result["text"] == "" and [b["max_tokens"] for b in seen] == [4096, 8192, 16384]

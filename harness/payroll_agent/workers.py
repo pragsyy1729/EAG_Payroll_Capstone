@@ -768,6 +768,26 @@ def _answer_request() -> dict[str, str]:
     return request
 
 
+_ANSWER_ATTEMPTS = 3
+_ANSWER_RETRY_NOTE = (" The previous reply was empty: answer now, concisely, in plain text, "
+                      "from the evidence supplied.")
+
+
+def _compact(value: Any, *, in_row: bool = False) -> Any:
+    """A smaller copy of tool evidence for an answer retry. Every row and every total stays, so counts
+    and breakdowns remain exact; each row keeps only its scalar fields, and long text is shortened."""
+    if isinstance(value, str):
+        return value if len(value) <= 160 else value[:160]
+    if isinstance(value, list):
+        return [_compact(item, in_row=True) for item in value]
+    if isinstance(value, dict):
+        if in_row:
+            return {key: _compact(item) for key, item in value.items()
+                    if item is not None and not isinstance(item, (dict, list))}
+        return {key: _compact(item) for key, item in value.items()}
+    return value
+
+
 async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:
     """The terminal capability: read every completed outcome from the graph's
     own journal (never a side channel) and ask the LLM to synthesise a
@@ -778,9 +798,7 @@ async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str,
         for node in snapshot.nodes.values()
         if node["state"] == "succeeded" and node["skill"] != "answer_with_evidence"
     ]
-    prompt = json.dumps({"question": task.input["query"], "evidence": evidence},
-                        ensure_ascii=False, default=str)
-    system = (
+    base_system = (
         "Answer the payroll question using only the supplied evidence. Cite concrete numbers, "
         "dates and record ids from the evidence -- never invent one. If the evidence contradicts "
         "itself or is missing something material to answering the question, say exactly what is "
@@ -794,8 +812,25 @@ async def run_answer_with_evidence(ctx: RunContext, task: TaskSpec) -> dict[str,
         "figures an estimate, say nothing was changed, and state the assumptions it lists."
     )
     request = _answer_request()
-    reply = await ctx.llm(prompt, system, **({"request": request} if request else {}))
-    return {"text": reply.get("text", ""), "provider": reply.get("provider"), "model": reply.get("model")}
+    kwargs = {"request": request} if request else {}
+    reply: dict[str, Any] = {}
+    text = ""
+    for attempt in range(_ANSWER_ATTEMPTS):
+        # A model that spends its budget before writing visible text returns nothing. Retry with the same
+        # evidence cut down to every row's scalar fields, so the prompt is small and the answer stays exact.
+        body = evidence if attempt == 0 else [{**item, "result": _compact(item["result"])} for item in evidence]
+        system = base_system if attempt == 0 else base_system + _ANSWER_RETRY_NOTE
+        prompt = json.dumps({"question": task.input["query"], "evidence": body}, ensure_ascii=False, default=str)
+        reply = await ctx.llm(prompt, system, **kwargs)
+        text = reply.get("text", "") or ""
+        if str(text).strip():
+            break
+    result = {"text": text, "provider": reply.get("provider"), "model": reply.get("model")}
+    if not str(text).strip():
+        result.update({"empty_reply": True, "finish_reason": reply.get("finish_reason")})
+    return result
+
+
 
 
 async def run_decline_request(ctx: RunContext, task: TaskSpec) -> dict[str, Any]:

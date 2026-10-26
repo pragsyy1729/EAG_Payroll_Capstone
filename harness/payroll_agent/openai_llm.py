@@ -17,6 +17,7 @@ import httpx
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, OpenAIError
 
 _RETRY_STATUS = (429, 500, 502, 503, 504)
+_MAX_TOKENS_CAP = 16384
 
 
 class OpenAICompatLLM:
@@ -32,14 +33,18 @@ class OpenAICompatLLM:
     async def complete(self, prompt: str, system: str, **_ignored: Any) -> dict[str, Any]:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
         last = "no attempt was made"
+        tokens = self.max_tokens
         for attempt in range(self.attempts):
             try:
                 reply = await self._client.chat.completions.create(
-                    model=self.model, messages=messages, temperature=0, max_tokens=self.max_tokens)
+                    model=self.model, messages=messages, temperature=0, max_tokens=tokens)
                 text = (reply.choices[0].message.content or "") if reply.choices else ""
                 finish = reply.choices[0].finish_reason if reply.choices else None
                 if not text.strip():       # a model that spends its budget on reasoning can return nothing visible
                     print(f"model endpoint returned empty text (finish_reason={finish})", file=sys.stderr, flush=True)
+                    if finish == "length" and tokens < _MAX_TOKENS_CAP and attempt < self.attempts - 1:
+                        tokens = min(tokens * 2, _MAX_TOKENS_CAP)      # it ran out of room: give it more
+                        continue
                 return {"text": text, "provider": "platform", "model": reply.model or self.model,
                         "finish_reason": finish}
             except APIStatusError as problem:
