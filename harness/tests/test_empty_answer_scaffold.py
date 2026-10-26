@@ -97,3 +97,17 @@ def test_the_official_evidence_carries_the_reason_and_keeps_the_old_wording():
     task = {"id": "t", "goal": "g", "authored_by": "team"}
     evidence = entry_for("suryodaya", task, row)["evidence"]
     assert "ended without a final answer" in evidence and "finish_reason=length" in evidence
+
+
+async def test_a_figure_grouped_with_spaces_is_read_as_one_number():
+    """Found in the local run: '12 600.00' was read as 12 and 600.00, and 600.00 looked invented."""
+    rec = {"answer": "Professional tax 12 600.00 and EPF 102 027.69.",
+           "tool_calls": [{"result": {"pt": 12600.0, "epf": 102027.69}}], "result": {"nodes": {}, "patch_events": []}}
+    assert (await check(rec))["ok"] is True
+
+
+async def test_a_space_grouped_figure_that_is_not_in_the_evidence_is_still_flagged():
+    rec = {"answer": "Professional tax 46 000.00.", "tool_calls": [{"result": {"pt": 12600.0}}],
+           "result": {"nodes": {}, "patch_events": []}}
+    result = await check(rec)
+    assert result["ok"] is False and result["observed"]["ungrounded_numbers"] == ["46000.00"]

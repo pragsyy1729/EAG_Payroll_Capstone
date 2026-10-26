@@ -140,6 +140,7 @@ async def tool_not_called(ctx: VerifyContext, params: dict[str, Any]) -> dict[st
 
 
 _NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_GROUPED = re.compile(r"(?<=\d)[ \u00a0\u202f](?=\d{3}(?!\d))")
 _ID = re.compile(r"\b[A-Z]{2,}-\d{4}-\d+\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
 
 
@@ -202,7 +203,8 @@ async def answer_grounded(ctx: VerifyContext, params: dict[str, Any]) -> dict[st
     haystack = evidence + " " + ctx.task.get("goal", "")
     flat = haystack.replace(",", "")
     min_digits = int(params.get("min_digits", 1))
-    numbers = {_norm(n) for n in _NUMBER.findall(answer)}
+    answer_numbers = _GROUPED.sub("", answer)       # "12 600.00" is one number, not 12 and 600.00
+    numbers = {_norm(n) for n in _NUMBER.findall(answer_numbers)}
     seen_values = {v for v in (_value(n) for n in _NUMBER.findall(flat)) if v is not None}
     ungrounded_numbers = sorted(n for n in numbers if len(n.replace(".", "")) > min_digits and n not in flat
                                 and not _seen_as_value(n, seen_values))
